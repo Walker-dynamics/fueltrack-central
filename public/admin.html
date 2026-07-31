@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FuelTrack Central — Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F8FA; --surface:#FFFFFF; --border:#E4E7EC;
+  --text:#101828; --text-2:#667085; --text-3:#98A2B3;
+  --accent:#2563EB; --accent-bg:#EFF4FF; --accent-border:#BFD5FE;
+  --success:#16A34A; --danger:#DC2626; --radius:10px;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;}
+.app{max-width:1080px;margin:0 auto;padding:20px 24px 60px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 0 20px;}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:16px;}
+.brand .dot-logo{width:20px;height:20px;border-radius:6px;background:var(--accent);}
+#logout{font-size:12px;color:var(--text-2);cursor:pointer;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px;}
+.card-title{font-size:14px;font-weight:600;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;}
+.form-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+.form-row input,.form-row select{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:inherit;font-size:12.5px;color:var(--text);background:var(--surface);flex:1;min-width:140px;}
+.form-row button{border:none;background:var(--accent);color:#fff;padding:8px 16px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;}
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+table td,table th{padding:8px 6px;border-top:1px solid var(--border);text-align:left;}
+table tr.head td{border-top:none;color:var(--text-2);font-weight:600;padding-bottom:8px;}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;}
+.pill.on{background:#EAFBF1;color:var(--success);}
+.pill.off{background:#FDEDED;color:var(--danger);}
+.pill button{border:none;background:none;font:inherit;color:inherit;cursor:pointer;text-decoration:underline;padding:0;margin-left:4px;}
+.row-actions button{border:1px solid var(--border);background:var(--surface);color:var(--text-2);padding:5px 10px;border-radius:7px;font-size:11.5px;cursor:pointer;font-family:inherit;margin-right:4px;}
+.msg{font-size:12px;margin:0 0 10px;padding:8px 10px;border-radius:8px;display:none;}
+.msg.ok{display:block;background:#EAFBF1;color:var(--success);}
+.msg.err{display:block;background:#FDEDED;color:var(--danger);}
+.muted{color:var(--text-3);}
+code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radius:5px;font-size:11.5px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><span class="dot-logo"></span>FuelTrack Central</div>
+    <span id="logout">Log out</span>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Stations</p>
+    <p class="msg" id="station-msg"></p>
+    <div class="form-row">
+      <input id="s-name" placeholder="Station name">
+      <input id="s-address" placeholder="Address (LAN IP or domain, optional)">
+      <input id="s-owner" placeholder="Owner email (optional)">
+      <button id="s-add">Add station</button>
+    </div>
+    <table id="stations-table"></table>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Users</p>
+    <p class="msg" id="user-msg"></p>
+    <div class="form-row">
+      <input id="u-email" placeholder="Email" type="email">
+      <input id="u-password" placeholder="Password (min 8 chars)" type="text">
+      <select id="u-role">
+        <option value="owner">Owner</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button id="u-add">Add user</button>
+    </div>
+    <table id="users-table"></table>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Login history <span class="muted" style="font-weight:400;font-size:12px;">last 100</span></p>
+    <table id="history-table"></table>
+  </div>
+</div>
+
+<script>
+const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : '—';
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { location.href = '/login'; throw new Error('unauthenticated'); }
+  return res.json();
+}
+
+function flash(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+}
+
+// ---------- stations ----------
+async function loadStations() {
+  const stations = await api('/api/admin/stations');
+  document.getElementById('stations-table').innerHTML =
+    `<tr class="head"><td>Name</td><td>Owner</td><td>Address</td><td>Subscription</td><td>License</td><td>Last check-in</td><td></td></tr>` +
+    stations.map((s) => `
+      <tr>
+        <td>${s.name}</td>
+        <td>${s.ownerEmail || '<span class="muted">unassigned</span>'}</td>
+        <td>${s.address || '<span class="muted">—</span>'}</td>
+        <td><span class="pill ${s.subscriptionActive ? 'on' : 'off'}">${s.subscriptionActive ? 'Active' : 'Inactive'}
+          <button data-toggle="${s.id}" data-active="${s.subscriptionActive}">${s.subscriptionActive ? 'deactivate' : 'activate'}</button></span></td>
+        <td>${s.hasLicense ? '<span class="pill on">Issued</span>' : '<span class="pill off">None</span>'}</td>
+        <td>${fmtTime(s.lastCheckinAt)}</td>
+        <td class="row-actions"><button data-license="${s.id}">Issue license</button></td>
+      </tr>`).join('');
+
+  document.querySelectorAll('[data-toggle]').forEach((btn) => {
+    btn.onclick = async () => {
+      const active = btn.dataset.active === 'true';
+      await api(`/api/admin/stations/${btn.dataset.toggle}/subscription`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !active })
+      });
+      loadStations();
+    };
+  });
+  document.querySelectorAll('[data-license]').forEach((btn) => {
+    btn.onclick = async () => {
+      const mb = prompt('Motherboard UUID (from `npm run fingerprint` on the station PC):');
+      if (!mb) return;
+      const cpu = prompt('CPU Processor ID:');
+      if (!cpu) return;
+      const res = await api(`/api/admin/stations/${btn.dataset.license}/license`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mb, cpu })
+      });
+      if (res.ok) {
+        alert(`License key (save as sigma_123.lic on that machine):\n\n${res.licenseKey}`);
+        loadStations();
+      } else {
+        alert(res.error || 'Failed to issue license.');
+      }
+    };
+  });
+}
+
+document.getElementById('s-add').onclick = async () => {
+  const name = document.getElementById('s-name').value.trim();
+  const address = document.getElementById('s-address').value.trim();
+  const ownerEmail = document.getElementById('s-owner').value.trim();
+  if (!name) { flash('station-msg', 'Station name is required.', false); return; }
+  const res = await api('/api/admin/stations', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, address, ownerEmail })
+  });
+  if (res.ok) {
+    flash('station-msg', `Station created. API key (copy into that station's config.json now - shown once): ${res.apiKey}`, true);
+    document.getElementById('s-name').value = '';
+    document.getElementById('s-address').value = '';
+    document.getElementById('s-owner').value = '';
+    loadStations();
+  } else {
+    flash('station-msg', res.error || 'Failed to create station.', false);
+  }
+};
+
+// ---------- users ----------
+async function loadUsers() {
+  const users = await api('/api/admin/users');
+  document.getElementById('users-table').innerHTML =
+    `<tr class="head"><td>Email</td><td>Role</td><td>Created</td></tr>` +
+    users.map((u) => `<tr><td>${u.email}</td><td>${u.role}</td><td>${fmtTime(u.created_at)}</td></tr>`).join('');
+}
+
+document.getElementById('u-add').onclick = async () => {
+  const email = document.getElementById('u-email').value.trim();
+  const password = document.getElementById('u-password').value;
+  const role = document.getElementById('u-role').value;
+  const res = await api('/api/admin/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, role })
+  });
+  if (res.ok) {
+    flash('user-msg', `User ${res.user.email} created.`, true);
+    document.getElementById('u-email').value = '';
+    document.getElementById('u-password').value = '';
+    loadUsers();
+    loadStations(); // owner emails may now resolve
+  } else {
+    flash('user-msg', res.error || 'Failed to create user.', false);
+  }
+};
+
+// ---------- login history ----------
+async function loadHistory() {
+  const rows = await api('/api/admin/login-history');
+  document.getElementById('history-table').innerHTML =
+    `<tr class="head"><td>Time</td><td>Email</td><td>Result</td><td>IP</td></tr>` +
+    rows.map((r) => `<tr><td>${fmtTime(r.created_at)}</td><td>${r.email}</td>
+      <td><span class="pill ${r.success ? 'on' : 'off'}">${r.success ? 'success' : 'failed'}</span></td>
+      <td>${r.ip || '—'}</td></tr>`).join('');
+}
+
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+};
+
+loadStations();
+loadUsers();
+loadHistory();
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FuelTrack Central — My Stations</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F8FA; --surface:#FFFFFF; --border:#E4E7EC;
+  --text:#101828; --text-2:#667085; --text-3:#98A2B3;
+  --accent:#2563EB; --success:#16A34A; --danger:#DC2626;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;}
+.app{max-width:640px;margin:0 auto;padding:20px 24px 60px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 0 20px;}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:16px;}
+.brand .dot-logo{width:20px;height:20px;border-radius:6px;background:var(--accent);}
+#logout{font-size:12px;color:var(--text-2);cursor:pointer;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+.card b{font-size:14px;}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;margin-top:6px;}
+.pill.on{background:#EAFBF1;color:var(--success);}
+.pill.off{background:#FDEDED;color:var(--danger);}
+.muted{color:var(--text-3);font-size:12px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><span class="dot-logo"></span>FuelTrack Central</div>
+    <span id="logout">Log out</span>
+  </div>
+  <div id="stations"></div>
+</div>
+<script>
+async function load() {
+  const res = await fetch('/api/my/stations');
+  if (res.status === 401) { location.href = '/login'; return; }
+  const stations = await res.json();
+  const el = document.getElementById('stations');
+  el.innerHTML = stations.length ? stations.map((s) => `
+    <div class="card">
+      <b>${s.name}</b><br>
+      <span class="muted">${s.address || 'no address on file'}</span><br>
+      <span class="pill ${s.subscriptionActive ? 'on' : 'off'}">${s.subscriptionActive ? 'Subscription active' : 'Subscription inactive'}</span><br>
+      <span class="muted">Last check-in: ${s.lastCheckinAt ? new Date(s.lastCheckinAt).toLocaleString() : 'never'}</span>
+    </div>`).join('') : '<p class="muted">No stations linked to your account yet.</p>';
+}
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+};
+load();
+</script>
+</body>
+</html>

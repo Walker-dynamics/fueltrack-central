@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FuelTrack Central — Sign in</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F8FA; --surface:#FFFFFF; --border:#E4E7EC;
+  --text:#101828; --text-2:#667085;
+  --accent:#2563EB; --danger:#DC2626; --radius:10px;
+}
+*{box-sizing:border-box;}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 26px;width:320px;}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:16px;margin-bottom:4px;}
+.brand .dot-logo{width:20px;height:20px;border-radius:6px;background:var(--accent);}
+p.sub{font-size:12px;color:var(--text-2);margin:0 0 18px;}
+label{font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;}
+input{width:100%;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:14px;margin-bottom:14px;}
+button{width:100%;border:none;background:var(--accent);color:#fff;padding:10px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;}
+button:disabled{opacity:.6;cursor:default;}
+.msg{font-size:12.5px;color:var(--danger);margin:-6px 0 12px;display:none;}
+</style>
+</head>
+<body>
+<form class="card" id="form">
+  <div class="brand"><span class="dot-logo"></span>FuelTrack Central</div>
+  <p class="sub">Station registry &amp; account management</p>
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username" autofocus required>
+  <label for="password">Password</label>
+  <input type="password" id="password" autocomplete="current-password" required>
+  <p class="msg" id="msg"></p>
+  <button type="submit" id="submit">Sign in</button>
+</form>
+<script>
+const form = document.getElementById('form');
+const msg = document.getElementById('msg');
+const btn = document.getElementById('submit');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  msg.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      location.href = '/';
+    } else {
+      msg.textContent = data.error || 'Login failed.';
+      msg.style.display = 'block';
+    }
+  } catch (err) {
+    msg.textContent = 'Network error.';
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+});
+</script>
+</body>
+</html>

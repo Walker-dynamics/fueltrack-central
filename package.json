@@ -1,0 +1,17 @@
+{
+  "name": "fueltrack-central",
+  "version": "1.0.0",
+  "description": "FuelTrack central server - accounts, station registry, license issuance, subscriptions, admin dashboard.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "create-admin": "node create-admin.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "express": "^4.19.2"
+  }
+}
