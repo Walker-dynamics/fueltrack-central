@@ -30,35 +30,101 @@ app.use((req, res, next) => {
   next();
 });
 
-async function currentUser(req) {
+// Admin-kind sessions map to the `users` table (this dashboard's own
+// accounts). Station-user-kind sessions are only ever used transiently, to
+// figure out where to redirect - they don't get access to anything here.
+async function resolveAdmin(req) {
   const sess = sessions.get(req.cookies[COOKIE_NAME]);
-  if (!sess) return null;
-  return db.getUserById(sess.userId);
+  if (!sess || sess.kind !== 'admin') return null;
+  return db.getUserById(sess.id);
 }
 
-// ---- auth (public) ----
+function normalizeStationAddress(raw) {
+  const addr = raw.trim().replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(addr)) return addr;
+  const isBareIp = /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(addr);
+  return (isBareIp ? 'http://' : 'https://') + addr;
+}
+
+// Where a just-authenticated (or returning) session should land. Admins go
+// to the dashboard; station users go to their own station's address - or a
+// clear error if that's not possible (station gone, no address on file, or
+// the station's subscription is inactive).
+async function resolveDestination(sess) {
+  if (sess.kind === 'admin') return { ok: true, redirect: '/admin' };
+
+  const su = await db.getStationUserById(sess.id);
+  if (!su) return { ok: false, error: 'User not found.' };
+  const station = await db.getStationById(su.station_id);
+  if (!station) return { ok: false, error: 'User not found.' };
+  if (!station.subscription_active) {
+    return { ok: false, error: 'This station\'s subscription is inactive. Contact FuelTrack to restore access.' };
+  }
+  if (!station.address || !station.address.trim()) {
+    return { ok: false, error: 'This station has no address on file yet. Contact your admin.' };
+  }
+  return { ok: true, redirect: normalizeStationAddress(station.address) };
+}
+
+// ---- login gateway (public) ----
+// Single entry point for everyone: central admins and station owners/
+// attendants alike. Resolves which of the two account tables the given
+// identifier belongs to, then either sends admins to /admin or looks up
+// the right station and sends everyone else there.
+app.get('/', async (req, res) => {
+  const sess = sessions.get(req.cookies[COOKIE_NAME]);
+  if (sess) {
+    const dest = await resolveDestination(sess);
+    if (dest.ok) return res.redirect(dest.redirect);
+    sessions.destroy(req.cookies[COOKIE_NAME]); // stale/no-longer-valid - fall through to the login form
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/login', (req, res) => res.redirect('/')); // old bookmarks/links
+
 app.post('/api/login', async (req, res) => {
   const ip = req.ip;
-  const { email, password } = req.body || {};
+  const { username, password } = req.body || {};
   if (loginThrottle.isLocked(ip)) {
     return res.status(429).json({ ok: false, error: 'Too many attempts. Try again in a few minutes.' });
   }
-  const user = typeof email === 'string' ? await db.getUserByEmail(email) : null;
-  const valid = user && typeof password === 'string' &&
-    verifyPassword(password, user.password_salt, user.password_hash);
+  const identifier = typeof username === 'string' ? username.trim() : '';
+  const logId = identifier.toLowerCase();
 
-  await db.recordLogin({ email: (email || '').toLowerCase(), success: !!valid, ip, userAgent: req.headers['user-agent'] });
+  const adminUser = identifier ? await db.getUserByEmail(identifier) : null;
+  const stationUser = (!adminUser && identifier) ? await db.getStationUserByUsername(identifier) : null;
+
+  if (!adminUser && !stationUser) {
+    await db.recordLogin({ email: logId, success: false, ip, userAgent: req.headers['user-agent'] });
+    loginThrottle.recordFailure(ip);
+    return res.status(404).json({ ok: false, error: 'No account found with that username.' });
+  }
+
+  const account = adminUser || stationUser;
+  const valid = typeof password === 'string' &&
+    verifyPassword(password, account.password_salt, account.password_hash);
+
+  await db.recordLogin({ email: logId, success: valid, ip, userAgent: req.headers['user-agent'] });
 
   if (!valid) {
     loginThrottle.recordFailure(ip);
-    return res.status(401).json({ ok: false, error: 'Invalid email or password.' });
+    return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
   }
   loginThrottle.recordSuccess(ip);
-  const token = sessions.create(user.id);
+
+  const sess = adminUser ? { kind: 'admin', id: adminUser.id } : { kind: 'station_user', id: stationUser.id };
+  const dest = await resolveDestination(sess);
+  if (!dest.ok) {
+    // Authenticated fine, but there's nowhere to send them - don't hand out a session for a dead end.
+    return res.status(409).json({ ok: false, error: dest.error });
+  }
+
+  const token = sessions.create(sess);
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000, path: '/'
   });
-  res.json({ ok: true, role: user.role });
+  res.json({ ok: true, redirect: dest.redirect });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -66,11 +132,6 @@ app.post('/api/logout', (req, res) => {
   if (token) sessions.destroy(token);
   res.clearCookie(COOKIE_NAME, { path: '/' });
   res.json({ ok: true });
-});
-
-app.get('/login', async (req, res) => {
-  if (await currentUser(req)) return res.redirect('/');
-  res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 // ---- station check-in (API key auth, not session-based) ----
@@ -123,18 +184,20 @@ app.post('/api/setup/:token', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- everything below requires a session ----
+// ---- everything below requires an admin session ----
+// (station-user sessions never reach here - they're resolved and sent
+// straight to their station's own address at the login gateway above)
 app.use(async (req, res, next) => {
-  const user = await currentUser(req);
+  const user = await resolveAdmin(req);
   if (user) { req.user = user; return next(); }
   if (req.path.startsWith('/api/')) return res.status(401).json({ ok: false, error: 'Not authenticated.' });
-  res.redirect('/login');
+  res.redirect('/');
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', req.user.role === 'admin' ? 'admin.html' : 'owner.html'));
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 app.get('/api/me', (req, res) => {
@@ -252,7 +315,7 @@ app.post('/api/admin/stations/:id/users', requireAdmin, async (req, res) => {
       stationId: station.id, username: username.trim(), role: cleanRole, ...newSetupToken()
     });
   } catch (e) {
-    return res.status(400).json({ ok: false, error: `Username already exists on this station.` });
+    return res.status(400).json({ ok: false, error: `Username already exists - usernames must be unique across all stations.` });
   }
   res.json({ ok: true, user: { id: user.id, username: user.username, role: user.role }, setupUrl: `${BASE_URL}/setup/${user.setup_token}` });
 });

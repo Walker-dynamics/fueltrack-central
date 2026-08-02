@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>FuelTrack Central — Sign in</title>
+<title>FuelTrack — Sign in</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -27,10 +27,10 @@ button:disabled{opacity:.6;cursor:default;}
 </head>
 <body>
 <form class="card" id="form">
-  <div class="brand"><span class="dot-logo"></span>FuelTrack Central</div>
-  <p class="sub">Station registry &amp; account management</p>
-  <label for="email">Email</label>
-  <input type="email" id="email" autocomplete="username" autofocus required>
+  <div class="brand"><span class="dot-logo"></span>FuelTrack</div>
+  <p class="sub">Sign in with your central admin email or your station username.</p>
+  <label for="username">Username or email</label>
+  <input type="text" id="username" autocomplete="username" autocapitalize="off" autofocus required>
   <label for="password">Password</label>
   <input type="password" id="password" autocomplete="current-password" required>
   <p class="msg" id="msg"></p>
@@ -50,13 +50,15 @@ form.addEventListener('submit', async (e) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: document.getElementById('email').value,
+        username: document.getElementById('username').value,
         password: document.getElementById('password').value
       })
     });
     const data = await res.json();
     if (data.ok) {
-      location.href = '/';
+      // Admins land on /admin; station owners/attendants land directly on
+      // their own station's dashboard - both come back as `redirect`.
+      location.href = data.redirect;
     } else {
       msg.textContent = data.error || 'Login failed.';
       msg.style.display = 'block';

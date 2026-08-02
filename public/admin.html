@@ -99,7 +99,7 @@ const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : '—';
 
 async function api(url, opts) {
   const res = await fetch(url, opts);
-  if (res.status === 401) { location.href = '/login'; throw new Error('unauthenticated'); }
+  if (res.status === 401) { location.href = '/'; throw new Error('unauthenticated'); }
   return res.json();
 }
 
@@ -279,7 +279,7 @@ async function loadHistory() {
 
 document.getElementById('logout').onclick = async () => {
   await fetch('/api/logout', { method: 'POST' });
-  location.href = '/login';
+  location.href = '/';
 };
 
 loadStations();
