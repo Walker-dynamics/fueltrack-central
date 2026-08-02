@@ -184,10 +184,9 @@ app.post('/api/setup/:token', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Favicons etc. need to be reachable on the public login page too, not
-// just once an admin is signed in.
+// Favicons and the APK download need to be reachable without signing in.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/icons/')) {
+  if (req.path.startsWith('/icons/') || req.path.startsWith('/downloads/')) {
     return express.static(path.join(__dirname, 'public'))(req, res, next);
   }
   next();

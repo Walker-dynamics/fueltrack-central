@@ -2,3 +2,4 @@ node_modules/
 central.db
 central.db-*
 .env
+public/downloads/
