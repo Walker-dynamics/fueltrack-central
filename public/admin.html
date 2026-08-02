@@ -126,6 +126,8 @@ async function loadStations() {
         <td class="row-actions">
           <button data-license="${s.id}">Issue license</button>
           <button data-accounts="${s.id}" data-name="${s.name}">Station accounts</button>
+          <button data-edit-address="${s.id}" data-address="${s.address || ''}">Edit address</button>
+          <button data-delete="${s.id}" data-name="${s.name}">Delete</button>
         </td>
       </tr>`).join('');
 
@@ -155,6 +157,26 @@ async function loadStations() {
       } else {
         alert(res.error || 'Failed to issue license.');
       }
+    };
+  });
+  document.querySelectorAll('[data-edit-address]').forEach((btn) => {
+    btn.onclick = async () => {
+      const address = prompt('Station address (LAN IP or domain, e.g. dashboard.fueltrack.com.pk):', btn.dataset.address);
+      if (address === null) return; // cancelled
+      const res = await api(`/api/admin/stations/${btn.dataset.editAddress}/address`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address })
+      });
+      if (res.ok) loadStations();
+      else alert(res.error || 'Failed to update address.');
+    };
+  });
+  document.querySelectorAll('[data-delete]').forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm(`Delete "${btn.dataset.name}"? This also removes its login accounts. Historical data on the station itself is not affected.`)) return;
+      const res = await api(`/api/admin/stations/${btn.dataset.delete}`, { method: 'DELETE' });
+      if (res.ok) loadStations();
+      else alert(res.error || 'Failed to delete station.');
     };
   });
   document.querySelectorAll('[data-accounts]').forEach((btn) => {

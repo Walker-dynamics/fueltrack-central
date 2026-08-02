@@ -260,6 +260,21 @@ app.post('/api/admin/stations/:id/subscription', requireAdmin, async (req, res) 
   res.json({ ok: true });
 });
 
+app.post('/api/admin/stations/:id/address', requireAdmin, async (req, res) => {
+  const station = await db.getStationById(req.params.id);
+  if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });
+  const { address } = req.body || {};
+  await db.setAddress(station.id, typeof address === 'string' ? address.trim() : null);
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/stations/:id', requireAdmin, async (req, res) => {
+  const station = await db.getStationById(req.params.id);
+  if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });
+  await db.deleteStation(station.id);
+  res.json({ ok: true });
+});
+
 app.post('/api/admin/stations/:id/license', requireAdmin, async (req, res) => {
   const station = await db.getStationById(req.params.id);
   if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });
