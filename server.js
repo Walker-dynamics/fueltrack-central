@@ -11,7 +11,13 @@ const {
 } = require('./lib/auth');
 
 const PORT = process.env.PORT || 4100;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const COOKIE_NAME = 'ftc_session';
+const SETUP_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+
+function newSetupToken() {
+  return { setupToken: randomToken(24), setupTokenExpiresAt: new Date(Date.now() + SETUP_TOKEN_TTL_MS).toISOString() };
+}
 
 const db = new Db({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
 const sessions = new SessionStore();
@@ -76,12 +82,45 @@ app.post('/api/checkin', async (req, res) => {
   if (!valid) return res.status(401).json({ ok: false, error: 'Invalid station credentials.' });
 
   await db.recordCheckin(station.id, req.ip);
+  const stationUsers = await db.listStationUsersForSync(station.id);
   res.json({
     ok: true,
     subscriptionActive: !!station.subscription_active,
     stationName: station.name,
-    message: station.subscription_active ? 'Subscription active.' : 'Subscription inactive - contact FuelTrack to renew.'
+    message: station.subscription_active ? 'Subscription active.' : 'Subscription inactive - contact FuelTrack to renew.',
+    // Synced down and cached locally so station-app login keeps working offline.
+    stationUsers: stationUsers.map((u) => ({
+      id: u.id, username: u.username, passwordHash: u.password_hash, passwordSalt: u.password_salt, role: u.role
+    }))
   });
+});
+
+// ---- one-time setup links (public - the token itself is the credential) ----
+app.get('/setup/:token', async (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'setup.html'));
+});
+
+app.get('/api/setup/:token', async (req, res) => {
+  const user = await db.getStationUserBySetupToken(req.params.token);
+  if (!user || new Date(user.setup_token_expires_at) < new Date()) {
+    return res.status(410).json({ ok: false, error: 'This setup link is invalid or has expired. Ask your admin for a new one.' });
+  }
+  const station = await db.getStationById(user.station_id);
+  res.json({ ok: true, username: user.username, role: user.role, stationName: station ? station.name : null });
+});
+
+app.post('/api/setup/:token', async (req, res) => {
+  const user = await db.getStationUserBySetupToken(req.params.token);
+  if (!user || new Date(user.setup_token_expires_at) < new Date()) {
+    return res.status(410).json({ ok: false, error: 'This setup link is invalid or has expired. Ask your admin for a new one.' });
+  }
+  const { password } = req.body || {};
+  if (!password || password.length < 8) {
+    return res.status(400).json({ ok: false, error: 'Password must be at least 8 characters.' });
+  }
+  const { salt, hash } = hashPassword(password);
+  await db.completeStationUserSetup(user.id, { passwordHash: hash, passwordSalt: salt });
+  res.json({ ok: true });
 });
 
 // ---- everything below requires a session ----
@@ -189,9 +228,46 @@ app.get('/api/admin/login-history', requireAdmin, async (req, res) => {
   res.json(await db.listLoginHistory(100));
 });
 
+// ---- admin: per-station login accounts (owner/attendant) ----
+app.get('/api/admin/stations/:id/users', requireAdmin, async (req, res) => {
+  const station = await db.getStationById(req.params.id);
+  if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });
+  const users = await db.listStationUsers(station.id);
+  res.json(users.map((u) => ({
+    id: u.id, username: u.username, role: u.role,
+    setupPending: !!u.setup_pending, createdAt: u.created_at
+  })));
+});
+
+app.post('/api/admin/stations/:id/users', requireAdmin, async (req, res) => {
+  const station = await db.getStationById(req.params.id);
+  if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });
+  const { username, role } = req.body || {};
+  if (!username || !username.trim()) return res.status(400).json({ ok: false, error: 'Username is required.' });
+  const cleanRole = role === 'owner' ? 'owner' : 'attendant';
+
+  let user;
+  try {
+    user = await db.createStationUser({
+      stationId: station.id, username: username.trim(), role: cleanRole, ...newSetupToken()
+    });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: `Username already exists on this station.` });
+  }
+  res.json({ ok: true, user: { id: user.id, username: user.username, role: user.role }, setupUrl: `${BASE_URL}/setup/${user.setup_token}` });
+});
+
+app.post('/api/admin/station-users/:userId/reset-password', requireAdmin, async (req, res) => {
+  const user = await db.getStationUserById(req.params.userId);
+  if (!user) return res.status(404).json({ ok: false, error: 'No such user.' });
+  const token = newSetupToken();
+  await db.setStationUserSetupToken(user.id, token);
+  res.json({ ok: true, setupUrl: `${BASE_URL}/setup/${token.setupToken}` });
+});
+
 const server = http.createServer(app);
 db.init().then(() => {
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`FuelTrack central server running at http://localhost:${PORT}`);
   });
 }).catch((e) => {

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FuelTrack — Set your password</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F8FA; --surface:#FFFFFF; --border:#E4E7EC;
+  --text:#101828; --text-2:#667085;
+  --accent:#2563EB; --danger:#DC2626; --success:#16A34A; --radius:10px;
+}
+*{box-sizing:border-box;}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 26px;width:320px;}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:16px;margin-bottom:4px;}
+.brand .dot-logo{width:20px;height:20px;border-radius:6px;background:var(--accent);}
+p.sub{font-size:12.5px;color:var(--text-2);margin:0 0 18px;}
+label{font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;}
+input{width:100%;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:14px;margin-bottom:14px;}
+button{width:100%;border:none;background:var(--accent);color:#fff;padding:10px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;}
+button:disabled{opacity:.6;cursor:default;}
+.msg{font-size:12.5px;margin:-6px 0 12px;display:none;}
+.msg.err{color:var(--danger);}
+.msg.ok{color:var(--success);}
+</style>
+</head>
+<body>
+<div class="card" id="loading"><p class="sub">Checking your link...</p></div>
+
+<form class="card" id="form" style="display:none;">
+  <div class="brand"><span class="dot-logo"></span>FuelTrack</div>
+  <p class="sub" id="who"></p>
+  <label for="password">New password</label>
+  <input type="password" id="password" autocomplete="new-password" required>
+  <label for="confirm">Confirm password</label>
+  <input type="password" id="confirm" autocomplete="new-password" required>
+  <p class="msg" id="msg"></p>
+  <button type="submit" id="submit">Set password &amp; finish</button>
+</form>
+
+<div class="card" id="expired" style="display:none;">
+  <div class="brand"><span class="dot-logo"></span>FuelTrack</div>
+  <p class="sub" id="expired-msg">This link is invalid or has expired.</p>
+</div>
+
+<div class="card" id="done" style="display:none;">
+  <div class="brand"><span class="dot-logo"></span>FuelTrack</div>
+  <p class="sub">Password set. You can now sign in on your station's dashboard.</p>
+</div>
+
+<script>
+const token = location.pathname.split('/').pop();
+
+async function boot(){
+  const res = await fetch(`/api/setup/${token}`);
+  const data = await res.json();
+  document.getElementById('loading').style.display = 'none';
+  if (!data.ok){
+    document.getElementById('expired-msg').textContent = data.error;
+    document.getElementById('expired').style.display = 'block';
+    return;
+  }
+  document.getElementById('who').textContent = `Welcome, ${data.username} (${data.role}) at ${data.stationName || 'your station'}.`;
+  document.getElementById('form').style.display = 'block';
+}
+
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById('msg');
+  const password = document.getElementById('password').value;
+  const confirm = document.getElementById('confirm').value;
+  msg.style.display = 'none';
+  if (password !== confirm){
+    msg.className = 'msg err'; msg.textContent = 'Passwords do not match.'; msg.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('submit');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const res = await fetch(`/api/setup/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  });
+  const data = await res.json();
+  if (data.ok){
+    document.getElementById('form').style.display = 'none';
+    document.getElementById('done').style.display = 'block';
+  } else {
+    msg.className = 'msg err'; msg.textContent = data.error; msg.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Set password & finish';
+  }
+});
+
+boot();
+</script>
+</body>
+</html>

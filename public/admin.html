@@ -59,6 +59,20 @@ code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radi
     <table id="stations-table"></table>
   </div>
 
+  <div class="card" id="accounts-panel" style="display:none;">
+    <p class="card-title" id="accounts-title">Station accounts</p>
+    <p class="msg" id="accounts-msg"></p>
+    <div class="form-row">
+      <input id="a-username" placeholder="Username">
+      <select id="a-role">
+        <option value="attendant">Attendant</option>
+        <option value="owner">Owner</option>
+      </select>
+      <button id="a-add">Add account</button>
+    </div>
+    <table id="accounts-table"></table>
+  </div>
+
   <div class="card">
     <p class="card-title">Users</p>
     <p class="msg" id="user-msg"></p>
@@ -109,7 +123,10 @@ async function loadStations() {
           <button data-toggle="${s.id}" data-active="${s.subscriptionActive}">${s.subscriptionActive ? 'deactivate' : 'activate'}</button></span></td>
         <td>${s.hasLicense ? '<span class="pill on">Issued</span>' : '<span class="pill off">None</span>'}</td>
         <td>${fmtTime(s.lastCheckinAt)}</td>
-        <td class="row-actions"><button data-license="${s.id}">Issue license</button></td>
+        <td class="row-actions">
+          <button data-license="${s.id}">Issue license</button>
+          <button data-accounts="${s.id}" data-name="${s.name}">Station accounts</button>
+        </td>
       </tr>`).join('');
 
   document.querySelectorAll('[data-toggle]').forEach((btn) => {
@@ -140,7 +157,68 @@ async function loadStations() {
       }
     };
   });
+  document.querySelectorAll('[data-accounts]').forEach((btn) => {
+    btn.onclick = () => openAccountsPanel(btn.dataset.accounts, btn.dataset.name);
+  });
 }
+
+// ---------- station accounts (owner/attendant login accounts) ----------
+let accountsStationId = null;
+
+function openAccountsPanel(stationId, stationName) {
+  accountsStationId = stationId;
+  document.getElementById('accounts-panel').style.display = 'block';
+  document.getElementById('accounts-title').textContent = `Station accounts — ${stationName}`;
+  loadAccounts();
+  document.getElementById('accounts-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function loadAccounts() {
+  if (!accountsStationId) return;
+  const users = await api(`/api/admin/stations/${accountsStationId}/users`);
+  document.getElementById('accounts-table').innerHTML =
+    `<tr class="head"><td>Username</td><td>Role</td><td>Status</td><td>Created</td><td></td></tr>` +
+    (users.map((u) => `
+      <tr>
+        <td>${u.username}</td>
+        <td>${u.role}</td>
+        <td>${u.setupPending ? '<span class="pill off">Setup pending</span>' : '<span class="pill on">Active</span>'}</td>
+        <td>${fmtTime(u.createdAt)}</td>
+        <td class="row-actions"><button data-reset="${u.id}">Reset password</button></td>
+      </tr>`).join('') ||
+      '<tr><td colspan="5" class="muted">No accounts yet.</td></tr>');
+
+  document.querySelectorAll('[data-reset]').forEach((btn) => {
+    btn.onclick = async () => {
+      const res = await api(`/api/admin/station-users/${btn.dataset.reset}/reset-password`, { method: 'POST' });
+      if (res.ok) {
+        prompt('New setup link (share with the user - expires in 24h):', res.setupUrl);
+        loadAccounts();
+      } else {
+        alert(res.error || 'Failed to reset password.');
+      }
+    };
+  });
+}
+
+document.getElementById('a-add').onclick = async () => {
+  if (!accountsStationId) return;
+  const username = document.getElementById('a-username').value.trim();
+  const role = document.getElementById('a-role').value;
+  if (!username) { flash('accounts-msg', 'Username is required.', false); return; }
+  const res = await api(`/api/admin/stations/${accountsStationId}/users`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, role })
+  });
+  if (res.ok) {
+    document.getElementById('a-username').value = '';
+    flash('accounts-msg', `Account created.`, true);
+    prompt('Setup link (share with the user - expires in 24h):', res.setupUrl);
+    loadAccounts();
+  } else {
+    flash('accounts-msg', res.error || 'Failed to create account.', false);
+  }
+};
 
 document.getElementById('s-add').onclick = async () => {
   const name = document.getElementById('s-name').value.trim();
