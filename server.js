@@ -184,6 +184,15 @@ app.post('/api/setup/:token', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Favicons etc. need to be reachable on the public login page too, not
+// just once an admin is signed in.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/icons/')) {
+    return express.static(path.join(__dirname, 'public'))(req, res, next);
+  }
+  next();
+});
+
 // ---- everything below requires an admin session ----
 // (station-user sessions never reach here - they're resolved and sent
 // straight to their station's own address at the login gateway above)
