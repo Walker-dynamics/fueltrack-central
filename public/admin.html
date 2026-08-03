@@ -41,6 +41,21 @@ table tr.head td{border-top:none;color:var(--text-2);font-weight:600;padding-bot
 .msg.err{display:block;background:#FDEDED;color:var(--danger);}
 .muted{color:var(--text-3);}
 code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radius:5px;font-size:11.5px;}
+
+.live-station{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px;}
+.live-station:last-child{margin-bottom:0;}
+.live-station-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.live-station-name{font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px;}
+.conn-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.conn-dot.on{background:var(--success);}
+.conn-dot.off{background:var(--text-3);}
+.noz-mini-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;}
+.noz-mini{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:11px;}
+.noz-mini .n{font-weight:600;font-size:12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;}
+.noz-mini .status{font-size:10.5px;font-weight:600;margin-bottom:4px;}
+.noz-mini .row{display:flex;justify-content:space-between;color:var(--text-2);}
+.noz-mini .row b{color:var(--text);font-variant-numeric:tabular-nums;}
+.txn-toggle{font-size:11.5px;color:var(--accent);cursor:pointer;text-decoration:underline;background:none;border:none;font-family:inherit;padding:0;}
 </style>
 </head>
 <body>
@@ -60,6 +75,11 @@ code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radi
       <button id="s-add">Add station</button>
     </div>
     <table id="stations-table"></table>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Live monitor <span class="muted" style="font-weight:400;font-size:12px;">auto-refreshes every 5s</span></p>
+    <div id="live-stations"><p class="muted">Loading…</p></div>
   </div>
 
   <div class="card" id="accounts-panel" style="display:none;">
@@ -187,6 +207,67 @@ async function loadStations() {
   });
 }
 
+// ---------- live monitor ----------
+const PRODUCT_NAMES = { '0': 'Super', '1': 'Diesel', '2': 'Hi-octane', '3': 'Kerosene' };
+const STATUS_COLORS = {
+  'Filling': 'var(--success)', 'Ready': '#B45309', 'On-hook': '#B45309',
+  'Off-hook': 'var(--success)', 'Fill-done': 'var(--accent)', 'Idle': 'var(--text-3)',
+  'Offline': 'var(--text-3)'
+};
+const fmtNum = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const openTxnPanels = new Set();
+
+async function loadLive() {
+  const stations = await api('/api/admin/live');
+  document.getElementById('live-stations').innerHTML = stations.length ? stations.map((s) => `
+    <div class="live-station">
+      <div class="live-station-head">
+        <span class="live-station-name">
+          <span class="conn-dot ${s.connected ? 'on' : 'off'}"></span>
+          ${s.stationName}
+          <span class="muted" style="font-weight:400;">${s.connected ? 'connected' : 'not connected'} · last event ${fmtTime(s.lastEventAt)}</span>
+        </span>
+        <button class="txn-toggle" data-txn-toggle="${s.stationId}">
+          ${openTxnPanels.has(s.stationId) ? 'Hide' : 'Show'} recent transactions
+        </button>
+      </div>
+      <div class="noz-mini-grid">
+        ${s.nozzles.length ? s.nozzles.map((n) => `
+          <div class="noz-mini">
+            <div class="n"><span>${n.num}</span><span class="muted">${n.product != null ? (PRODUCT_NAMES[n.product] || '?') : '-'}</span></div>
+            <div class="status" style="color:${STATUS_COLORS[n.status] || 'var(--text-3)'}">${n.status || 'Unknown'}</div>
+            <div class="row"><span>Rs</span><b>${fmtNum(n.rupees)}</b></div>
+            <div class="row"><span>Ltr</span><b>${fmtNum(n.litres)}</b></div>
+          </div>`).join('') : '<p class="muted" style="grid-column:1/-1;">No nozzle data yet.</p>'}
+      </div>
+      <div id="txn-panel-${s.stationId}" style="display:${openTxnPanels.has(s.stationId) ? 'block' : 'none'};margin-top:10px;">
+        <table id="txn-table-${s.stationId}"><tr><td class="muted">Loading…</td></tr></table>
+      </div>
+    </div>`).join('') : '<p class="muted">No stations yet.</p>';
+
+  document.querySelectorAll('[data-txn-toggle]').forEach((btn) => {
+    btn.onclick = () => toggleTxnPanel(btn.dataset.txnToggle);
+  });
+  for (const id of openTxnPanels) loadTxnPanel(id);
+}
+
+function toggleTxnPanel(stationId) {
+  if (openTxnPanels.has(stationId)) openTxnPanels.delete(stationId);
+  else openTxnPanels.add(stationId);
+  loadLive();
+}
+
+async function loadTxnPanel(stationId) {
+  const rows = await api(`/api/admin/stations/${stationId}/transactions?limit=15`);
+  const table = document.getElementById(`txn-table-${stationId}`);
+  if (!table) return;
+  table.innerHTML = `<tr class="head"><td>Time</td><td>Nozzle</td><td>Product</td><td class="num">Litres</td><td class="num">Rupees</td></tr>` +
+    (rows.map((r) => `<tr><td>${r.station_timestamp || fmtTime(r.received_at)}</td><td>${r.noz}</td>
+      <td>${PRODUCT_NAMES[r.product] || r.product}</td>
+      <td class="num">${fmtNum(r.ltr)}</td><td class="num">${fmtNum(r.rup)}</td></tr>`).join('') ||
+      '<tr><td colspan="5" class="muted">No transactions yet.</td></tr>');
+}
+
 // ---------- station accounts (owner/attendant login accounts) ----------
 let accountsStationId = null;
 
@@ -310,6 +391,8 @@ document.getElementById('logout').onclick = async () => {
 loadStations();
 loadUsers();
 loadHistory();
+loadLive();
+setInterval(loadLive, 5000);
 </script>
 </body>
 </html>

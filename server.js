@@ -2,9 +2,11 @@
 const path = require('path');
 const http = require('http');
 const express = require('express');
+const { WebSocketServer, WebSocket } = require('ws');
 
 const { Db } = require('./lib/db');
 const { computeSerial } = require('./lib/license');
+const { LiveState } = require('./lib/liveState');
 const {
   hashPassword, verifyPassword, randomToken,
   SessionStore, LoginThrottle, parseCookies
@@ -22,6 +24,7 @@ function newSetupToken() {
 const db = new Db({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
 const sessions = new SessionStore();
 const loginThrottle = new LoginThrottle();
+const liveState = new LiveState();
 
 const app = express();
 app.use(express.json());
@@ -314,6 +317,38 @@ app.get('/api/admin/login-history', requireAdmin, async (req, res) => {
   res.json(await db.listLoginHistory(100));
 });
 
+// ---- admin: live monitor ----
+// Prefers the in-memory (ephemeral-included) snapshot for a station that's
+// currently connected; falls back to Turso's durable snapshot (last real
+// status change) for one that isn't - e.g. right after this server itself
+// restarts, before any station has reconnected yet.
+app.get('/api/admin/live', requireAdmin, async (req, res) => {
+  const stations = await db.listStations();
+  const result = [];
+  for (const st of stations) {
+    const live = liveState.snapshot(st.id);
+    let nozzles = live.nozzles;
+    if (!nozzles.length) {
+      const rows = await db.listNozzleState(st.id);
+      nozzles = rows.map((r) => ({
+        num: r.noz, status: r.status, product: r.product,
+        rupees: r.rupees, litres: r.litres, rate: r.rate, totalMeter: r.total_meter
+      }));
+    }
+    result.push({
+      stationId: st.id, stationName: st.name,
+      connected: live.connected, lastEventAt: live.lastEventAt,
+      nozzles
+    });
+  }
+  res.json(result);
+});
+
+app.get('/api/admin/stations/:id/transactions', requireAdmin, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  res.json(await db.listStationTransactions(req.params.id, limit));
+});
+
 // ---- admin: per-station login accounts (owner/attendant) ----
 app.get('/api/admin/stations/:id/users', requireAdmin, async (req, res) => {
   const station = await db.getStationById(req.params.id);
@@ -352,6 +387,87 @@ app.post('/api/admin/station-users/:userId/reset-password', requireAdmin, async 
 });
 
 const server = http.createServer(app);
+
+// ---- station uplink: durable events + ephemeral live ticks ----
+// Protocol (station -> central), matching lib/uplink.js in the station app:
+//   -> {type:'auth', stationId, apiKey}            <- {type:'auth_ok'} | {type:'auth_fail', error}
+//   -> {type:'event', id, kind:'nozzle'|'transaction', data, ts}   <- {type:'ack', id}
+//   -> {type:'live', kind:'nozzle', data, ts}       (no ack, no persistence)
+//   -> {type:'ping'}                                <- {type:'pong'}
+const wssStation = new WebSocketServer({ server, path: '/ws/station' });
+
+wssStation.on('connection', (ws) => {
+  let authed = false;
+  let station = null;
+
+  const send = (obj) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify(obj)); } catch { /* connection is on its way out; 'close' will follow */ }
+    }
+  };
+
+  ws.on('message', async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    if (msg.type === 'auth') {
+      const st = typeof msg.stationId === 'string' ? await db.getStationById(msg.stationId) : null;
+      const valid = st && typeof msg.apiKey === 'string' &&
+        verifyPassword(msg.apiKey, st.api_key_salt, st.api_key_hash);
+      if (!valid) {
+        send({ type: 'auth_fail', error: 'Invalid station credentials.' });
+        ws.close();
+        return;
+      }
+      station = st;
+      authed = true;
+      liveState.setConnected(station.id, true);
+      send({ type: 'auth_ok' });
+      return;
+    }
+
+    if (!authed) return; // ignore everything until authenticated
+
+    if (msg.type === 'ping') {
+      send({ type: 'pong' });
+      return;
+    }
+
+    if (msg.type === 'live' && msg.kind === 'nozzle' && msg.data) {
+      liveState.updateNozzle(station.id, msg.data); // ephemeral - never touches Turso
+      return;
+    }
+
+    if (msg.type === 'event' && msg.id && msg.kind) {
+      try {
+        if (msg.kind === 'nozzle') {
+          await db.upsertNozzleState(station.id, msg.id, msg.data);
+          liveState.updateNozzle(station.id, msg.data);
+        } else if (msg.kind === 'transaction') {
+          await db.insertStationTransaction(station.id, msg.id, msg.data);
+        } else {
+          return; // unrecognized kind - drop silently, don't ack, don't crash
+        }
+      } catch (e) {
+        console.error(`[ws/station] failed to process event ${msg.id}:`, e.message);
+        return; // no ack - the station will retry after its own ack-timeout/reconnect
+      }
+      // event_id UNIQUE + INSERT OR IGNORE (transactions) and a blind
+      // upsert keyed on (station, noz) (nozzle state) both make redelivery
+      // safe, so acking here is correct whether this was the first
+      // delivery or a resend of something already applied.
+      send({ type: 'ack', id: msg.id });
+      return;
+    }
+  });
+
+  ws.on('close', () => {
+    if (station) liveState.setConnected(station.id, false);
+  });
+
+  ws.on('error', () => { /* 'close' always follows */ });
+});
+
 db.init().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`FuelTrack central server running at http://localhost:${PORT}`);
