@@ -7,6 +7,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { Db } = require('./lib/db');
 const { computeSerial } = require('./lib/license');
 const { LiveState } = require('./lib/liveState');
+const { mintHandoffToken, publicKeyPem: ssoPublicKeyPem } = require('./lib/sso');
 const {
   hashPassword, verifyPassword, randomToken,
   SessionStore, LoginThrottle, parseCookies
@@ -52,7 +53,9 @@ function normalizeStationAddress(raw) {
 // Where a just-authenticated (or returning) session should land. Admins go
 // to the dashboard; station users go to their own station's address - or a
 // clear error if that's not possible (station gone, no address on file, or
-// the station's subscription is inactive).
+// the station's subscription is inactive). Station users get a one-time
+// handoff token appended so they land there already logged in instead of
+// re-entering their password a second time (see lib/sso.js).
 async function resolveDestination(sess) {
   if (sess.kind === 'admin') return { ok: true, redirect: '/admin' };
 
@@ -66,7 +69,9 @@ async function resolveDestination(sess) {
   if (!station.address || !station.address.trim()) {
     return { ok: false, error: 'This station has no address on file yet. Contact your admin.' };
   }
-  return { ok: true, redirect: normalizeStationAddress(station.address) };
+  const base = normalizeStationAddress(station.address);
+  const token = mintHandoffToken({ username: su.username, stationId: station.id });
+  return { ok: true, redirect: `${base}/api/sso/exchange?token=${encodeURIComponent(token)}` };
 }
 
 // ---- login gateway (public) ----
@@ -155,7 +160,10 @@ app.post('/api/checkin', async (req, res) => {
     // Synced down and cached locally so station-app login keeps working offline.
     stationUsers: stationUsers.map((u) => ({
       id: u.id, username: u.username, passwordHash: u.password_hash, passwordSalt: u.password_salt, role: u.role
-    }))
+    })),
+    // Cached locally so the station can verify a gateway single-sign-on
+    // handoff token with no round trip back here - see lib/sso.js.
+    ssoPublicKey: ssoPublicKeyPem
   });
 });
 
