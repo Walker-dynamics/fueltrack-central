@@ -15,6 +15,21 @@ const {
 
 const PORT = process.env.PORT || 4100;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// Setup links must be openable by a real person, so they can't use BASE_URL's
+// localhost fallback (that's the container's own address - unusable to anyone
+// else, which is why links were coming out as http://localhost:8080/setup/...).
+// Prefer an explicitly configured PUBLIC_BASE_URL or BASE_URL, otherwise derive
+// it from the request the admin is actually making, honouring the proxy headers
+// Railway/Cloudflare set.
+function publicBaseUrl(req) {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/+$/, '');
+  if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/+$/, '');
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  if (!host) return BASE_URL;
+  return `${proto}://${host}`;
+}
 const COOKIE_NAME = 'ftc_session';
 const SETUP_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -457,7 +472,7 @@ app.post('/api/admin/stations/:id/users', requireAdmin, async (req, res) => {
   } catch (e) {
     return res.status(400).json({ ok: false, error: `Username already exists - usernames must be unique across all stations.` });
   }
-  res.json({ ok: true, user: { id: user.id, username: user.username, role: user.role }, setupUrl: `${BASE_URL}/setup/${user.setup_token}` });
+  res.json({ ok: true, user: { id: user.id, username: user.username, role: user.role }, setupUrl: `${publicBaseUrl(req)}/setup/${user.setup_token}` });
 });
 
 app.post('/api/admin/station-users/:userId/reset-password', requireAdmin, async (req, res) => {
@@ -465,7 +480,7 @@ app.post('/api/admin/station-users/:userId/reset-password', requireAdmin, async 
   if (!user) return res.status(404).json({ ok: false, error: 'No such user.' });
   const token = newSetupToken();
   await db.setStationUserSetupToken(user.id, token);
-  res.json({ ok: true, setupUrl: `${BASE_URL}/setup/${token.setupToken}` });
+  res.json({ ok: true, setupUrl: `${publicBaseUrl(req)}/setup/${token.setupToken}` });
 });
 
 const server = http.createServer(app);
