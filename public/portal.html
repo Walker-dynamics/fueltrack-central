@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FuelTrack — Station Portal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F8FA; --surface:#FFFFFF; --border:#E4E7EC;
+  --text:#101828; --text-2:#667085; --text-3:#98A2B3;
+  --accent:#2563EB; --accent-bg:#EFF4FF; --accent-border:#BFD5FE;
+  --success:#16A34A; --danger:#DC2626; --radius:10px;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;}
+.app{max-width:900px;margin:0 auto;padding:20px 24px 60px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 0 20px;}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:16px;}
+.brand .dot-logo{width:20px;height:20px;border-radius:6px;background:var(--accent);}
+.brand-sub{font-size:12px;color:var(--text-3);font-weight:500;}
+#logout{font-size:12px;color:var(--text-2);cursor:pointer;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px;}
+.card-title{font-size:14px;font-weight:600;margin:0 0 14px;display:flex;justify-content:space-between;align-items:center;}
+.pill{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;}
+.pill.on{background:#EAFBF1;color:var(--success);}
+.pill.off{background:#FDEDED;color:var(--danger);}
+.muted{color:var(--text-3);font-size:12px;}
+
+.noz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+.n{border:1px solid var(--border);border-radius:10px;padding:10px 12px;cursor:pointer;background:var(--surface);transition:border-color .12s,background .12s;}
+.n:hover{border-color:var(--accent-border);}
+.n.sel{border-color:var(--accent);background:var(--accent-bg);}
+.n .num{font-weight:600;font-size:13px;}
+.n .prod{color:var(--text-2);font-size:11.5px;margin-left:4px;}
+.n .status{font-size:10.5px;font-weight:600;margin-top:6px;}
+.n .row{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-2);margin-top:4px;}
+.n .row b{color:var(--text);font-weight:600;}
+
+.filter-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+.filter-bar button{border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer;font-family:inherit;}
+.filter-bar button.active{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+table td,table th{padding:8px 6px;border-top:1px solid var(--border);text-align:left;}
+table tr.head td{border-top:none;color:var(--text-2);font-weight:600;padding-bottom:8px;}
+table td.num{text-align:right;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><span class="dot-logo"></span><div>FuelTrack<div class="brand-sub" id="station-name">—</div></div></div>
+    <span id="logout">Log out</span>
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      Live monitor
+      <span id="conn-pill" class="pill off">Offline</span>
+    </div>
+    <div class="noz-grid" id="noz-grid"><p class="muted">Loading…</p></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      <span id="summary-title">Sales summary — all dispensers</span>
+    </div>
+    <div class="filter-bar" id="filter-bar"></div>
+    <table id="txn-table">
+      <tr class="head"><td>Time</td><td>Nozzle</td><td>Product</td><td class="num">Litres</td><td class="num">Rupees</td></tr>
+      <tr><td colspan="5" class="muted">Loading…</td></tr>
+    </table>
+  </div>
+</div>
+
+<script>
+const PRODUCT_NAMES = { '0': 'Super', '1': 'Diesel', '2': 'Hi-octane', '3': 'Kerosene' };
+const STATUS_COLORS = {
+  'Filling': 'var(--success)', 'Ready': '#B45309', 'On-hook': '#B45309',
+  'Off-hook': 'var(--success)', 'Fill-done': 'var(--accent)', 'Idle': 'var(--text-3)',
+  'Offline': 'var(--text-3)'
+};
+const fmtNum = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+let selectedNoz = null; // null = all dispensers
+let knownNozzles = [];
+
+async function api(path) {
+  const res = await fetch(path);
+  if (res.status === 401) { location.href = '/'; throw new Error('unauthenticated'); }
+  return res.json();
+}
+
+async function loadMe() {
+  const me = await api('/api/portal/me');
+  document.getElementById('station-name').textContent = me.stationName;
+}
+
+async function loadLive() {
+  const live = await api('/api/portal/live');
+  const pill = document.getElementById('conn-pill');
+  pill.textContent = live.connected ? 'Online' : 'Offline';
+  pill.className = 'pill ' + (live.connected ? 'on' : 'off');
+
+  knownNozzles = live.nozzles;
+  const grid = document.getElementById('noz-grid');
+  grid.innerHTML = live.nozzles.length ? live.nozzles.map((n) => `
+    <div class="n ${selectedNoz === n.num ? 'sel' : ''}" data-noz="${n.num}">
+      <span class="num">${n.num}</span><span class="prod">${n.product != null ? (PRODUCT_NAMES[n.product] || '?') : '-'}</span>
+      <div class="status" style="color:${STATUS_COLORS[n.status] || 'var(--text-3)'}">${n.status || 'Unknown'}</div>
+      <div class="row"><span>Rs</span><b>${fmtNum(n.rupees)}</b></div>
+      <div class="row"><span>Ltr</span><b>${fmtNum(n.litres)}</b></div>
+    </div>`).join('') : '<p class="muted">No nozzle data yet - waiting for the station to send its first reading.</p>';
+
+  grid.querySelectorAll('.n').forEach((el) => {
+    el.onclick = () => { selectNoz(el.dataset.noz === selectedNoz ? null : el.dataset.noz); };
+  });
+
+  renderFilterBar();
+}
+
+function renderFilterBar() {
+  const bar = document.getElementById('filter-bar');
+  const nums = knownNozzles.map((n) => n.num);
+  bar.innerHTML = `<button data-noz="" class="${selectedNoz === null ? 'active' : ''}">All</button>` +
+    nums.map((num) => `<button data-noz="${num}" class="${selectedNoz === num ? 'active' : ''}">Nozzle ${num}</button>`).join('');
+  bar.querySelectorAll('button').forEach((btn) => {
+    btn.onclick = () => selectNoz(btn.dataset.noz || null);
+  });
+}
+
+function selectNoz(noz) {
+  selectedNoz = noz;
+  document.getElementById('summary-title').textContent = noz ? `Sales summary — nozzle ${noz}` : 'Sales summary — all dispensers';
+  loadLive();
+  loadTransactions();
+}
+
+async function loadTransactions() {
+  const url = '/api/portal/transactions' + (selectedNoz ? `?noz=${encodeURIComponent(selectedNoz)}` : '');
+  const rows = await api(url);
+  const table = document.getElementById('txn-table');
+  table.innerHTML = '<tr class="head"><td>Time</td><td>Nozzle</td><td>Product</td><td class="num">Litres</td><td class="num">Rupees</td></tr>' +
+    (rows.length ? rows.map((r) => `
+      <tr><td>${r.station_timestamp || r.received_at}</td><td>${r.noz}</td>
+      <td>${PRODUCT_NAMES[r.product] || r.product}</td>
+      <td class="num">${fmtNum(r.ltr)}</td><td class="num">${fmtNum(r.rup)}</td></tr>`).join('') :
+      '<tr><td colspan="5" class="muted">No transactions yet.</td></tr>');
+}
+
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/portal/logout', { method: 'POST' });
+  location.href = '/';
+};
+
+loadMe();
+loadLive();
+loadTransactions();
+setInterval(loadLive, 5000);
+setInterval(loadTransactions, 15000);
+</script>
+</body>
+</html>

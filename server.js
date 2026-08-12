@@ -43,6 +43,18 @@ async function resolveAdmin(req) {
   return db.getUserById(sess.id);
 }
 
+// Station-user (owner/attendant) identity, scoped to exactly one station -
+// used only by the /portal routes below, never mixed with req.user (admin).
+async function resolveStationUser(req) {
+  const sess = sessions.get(req.cookies[COOKIE_NAME]);
+  if (!sess || sess.kind !== 'station_user') return null;
+  const su = await db.getStationUserById(sess.id);
+  if (!su) return null;
+  const station = await db.getStationById(su.station_id);
+  if (!station || !station.subscription_active) return null;
+  return { user: su, station };
+}
+
 function normalizeStationAddress(raw) {
   const addr = raw.trim().replace(/\/+$/, '');
   if (/^https?:\/\//i.test(addr)) return addr;
@@ -66,12 +78,17 @@ async function resolveDestination(sess) {
   if (!station.subscription_active) {
     return { ok: false, error: 'This station\'s subscription is inactive. Contact FuelTrack to restore access.' };
   }
-  if (!station.address || !station.address.trim()) {
-    return { ok: false, error: 'This station has no address on file yet. Contact your admin.' };
+  // Legacy stations still running their own web server (address on file)
+  // keep the old external SSO handoff. Desktop-app stations have no address
+  // to hand off to - they land on the central-hosted portal instead (see
+  // the /portal routes below), authenticated with the same session cookie
+  // since it's now the same origin.
+  if (station.address && station.address.trim()) {
+    const base = normalizeStationAddress(station.address);
+    const token = mintHandoffToken({ username: su.username, stationId: station.id });
+    return { ok: true, redirect: `${base}/api/sso/exchange?token=${encodeURIComponent(token)}` };
   }
-  const base = normalizeStationAddress(station.address);
-  const token = mintHandoffToken({ username: su.username, stationId: station.id });
-  return { ok: true, redirect: `${base}/api/sso/exchange?token=${encodeURIComponent(token)}` };
+  return { ok: true, redirect: '/portal' };
 }
 
 // ---- login gateway (public) ----
@@ -201,6 +218,63 @@ app.use((req, res, next) => {
     return express.static(path.join(__dirname, 'public'))(req, res, next);
   }
   next();
+});
+
+// ---- station portal (owner/attendant) ----
+// Desktop-app stations have no web server of their own, so station users
+// land here after login (see resolveDestination above) instead of being
+// handed off externally. Every route re-derives the station from the
+// session - nothing here ever trusts a client-supplied station id, so one
+// station user can never see another station's data.
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith('/portal') && !req.path.startsWith('/api/portal')) return next();
+
+  const ctx = await resolveStationUser(req);
+  if (!ctx) {
+    if (req.path.startsWith('/api/')) return res.status(401).json({ ok: false, error: 'Not authenticated.' });
+    return res.redirect('/');
+  }
+  req.stationUser = ctx.user;
+  req.station = ctx.station;
+  next();
+});
+
+app.get('/portal', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'portal.html'));
+});
+
+app.get('/api/portal/me', (req, res) => {
+  res.json({ ok: true, username: req.stationUser.username, role: req.stationUser.role, stationName: req.station.name });
+});
+
+// Same connected-or-fall-back-to-last-known-state pattern as /api/admin/live,
+// just scoped to this one station instead of every station.
+app.get('/api/portal/live', async (req, res) => {
+  const live = liveState.snapshot(req.station.id);
+  let nozzles = live.nozzles;
+  if (!nozzles.length) {
+    const rows = await db.listNozzleState(req.station.id);
+    nozzles = rows.map((r) => ({
+      num: r.noz, status: r.status, product: r.product,
+      rupees: r.rupees, litres: r.litres, rate: r.rate, totalMeter: r.total_meter
+    }));
+  }
+  res.json({ connected: live.connected, lastEventAt: live.lastEventAt, nozzles });
+});
+
+// ?noz=03 filters to just that dispenser - the "select a particular
+// dispenser" requirement. Omit it for the full station summary.
+app.get('/api/portal/transactions', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 30, 200);
+  const noz = typeof req.query.noz === 'string' && req.query.noz.trim() ? req.query.noz.trim() : null;
+  res.json(await db.listStationTransactions(req.station.id, limit, noz));
+});
+
+app.post('/api/portal/logout', (req, res) => {
+  const token = req.cookies[COOKIE_NAME];
+  if (token) sessions.destroy(token);
+  res.clearCookie(COOKIE_NAME, { path: '/' });
+  res.json({ ok: true });
 });
 
 // ---- everything below requires an admin session ----
