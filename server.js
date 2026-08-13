@@ -227,9 +227,10 @@ app.post('/api/setup/:token', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Favicons and the APK download need to be reachable without signing in.
+// Favicons, fonts, images and the APK download need to be reachable without signing in.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/icons/') || req.path.startsWith('/downloads/')) {
+  if (req.path.startsWith('/icons/') || req.path.startsWith('/downloads/')
+      || req.path.startsWith('/fonts/') || req.path.startsWith('/img/')) {
     return express.static(path.join(__dirname, 'public'))(req, res, next);
   }
   next();
