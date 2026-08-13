@@ -227,10 +227,12 @@ app.post('/api/setup/:token', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Favicons, fonts, images and the APK download need to be reachable without signing in.
+// Favicons, fonts, images, robots/sitemap and the APK download need to be reachable
+// without signing in - the search-engine crawler certainly doesn't have a session.
 app.use((req, res, next) => {
   if (req.path.startsWith('/icons/') || req.path.startsWith('/downloads/')
-      || req.path.startsWith('/fonts/') || req.path.startsWith('/img/')) {
+      || req.path.startsWith('/fonts/') || req.path.startsWith('/img/')
+      || req.path === '/robots.txt' || req.path === '/sitemap.xml') {
     return express.static(path.join(__dirname, 'public'))(req, res, next);
   }
   next();
