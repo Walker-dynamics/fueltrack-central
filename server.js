@@ -697,6 +697,7 @@ wssStation.on('connection', (ws) => {
       authed = true;
       stationConnections.set(station.id, ws);
       liveState.setConnected(station.id, true);
+      broadcastStatusChange(station.id, true);
       send({ type: 'auth_ok' });
       return;
     }
@@ -749,6 +750,7 @@ wssStation.on('connection', (ws) => {
   ws.on('close', () => {
     if (station) {
       liveState.setConnected(station.id, false);
+      broadcastStatusChange(station.id, false);
       if (stationConnections.get(station.id) === ws) stationConnections.delete(station.id);
     }
   });
@@ -790,6 +792,22 @@ wssBrowser.on('connection', async (ws, req) => {
 function broadcastLiveUpdate(stationId, nozzleData) {
   if (browserClients.size === 0) return;
   const payload = JSON.stringify({ type: 'live', stationId, data: nozzleData });
+  for (const [client, info] of browserClients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (info.kind === 'admin' || info.stationId === stationId) {
+      try { client.send(payload); } catch { /* ignore - its own 'close' will clean it up */ }
+    }
+  }
+}
+
+// Separate from broadcastLiveUpdate: the Live/Offline indicator was only ever updated
+// as a side effect of a nozzle-data message arriving, so an idle station (no fills
+// happening right when someone loads the portal) could sit showing "Offline" even
+// though it's genuinely connected - nothing ever told the browser otherwise. This
+// broadcasts the connection state itself, independent of whether any data is flowing.
+function broadcastStatusChange(stationId, connected) {
+  if (browserClients.size === 0) return;
+  const payload = JSON.stringify({ type: 'status', stationId, connected });
   for (const [client, info] of browserClients) {
     if (client.readyState !== WebSocket.OPEN) continue;
     if (info.kind === 'admin' || info.stationId === stationId) {
