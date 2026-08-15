@@ -99,7 +99,7 @@ body[data-theme="white"] .noz-top img{filter:brightness(0) saturate(100%);opacit
 .noz-total .cap{font-size:13px;color:var(--text-dim);font-weight:600;}
 .noz-total .val{font-family:'DSEG7Classic',monospace;font-size:15px;}
 
-/* ---- sales ---- */
+/* ---- sales / records ---- */
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
 .filters button{
   background:var(--panel-bg);border:1px solid var(--panel-border);color:var(--text-dim);
@@ -108,6 +108,23 @@ body[data-theme="white"] .noz-top img{filter:brightness(0) saturate(100%);opacit
 }
 .filters button.active{background:var(--accent);border-color:var(--accent);color:#0a0a0a;}
 body[data-theme="white"] .filters button.active{color:#fff;}
+
+.report-toggle{display:flex;gap:8px;margin-bottom:14px;}
+.report-toggle button{
+  background:var(--panel-bg);border:1px solid var(--panel-border);color:var(--text-dim);
+  border-radius:10px;padding:10px 22px;font-size:12.5px;font-weight:700;
+  font-family:inherit;cursor:pointer;backdrop-filter:blur(8px);
+}
+.report-toggle button.active{background:var(--accent);border-color:var(--accent);color:#0a0a0a;}
+body[data-theme="white"] .report-toggle button.active{color:#fff;}
+
+.date-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;margin-bottom:14px;}
+.date-field label{display:block;font-size:10.5px;font-weight:700;color:var(--text-dim);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px;}
+.date-field input{
+  background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:8px;
+  padding:8px 10px;color:var(--text);font-family:inherit;font-size:12.5px;backdrop-filter:blur(8px);
+}
+.date-field input::-webkit-calendar-picker-indicator{filter:invert(.6);cursor:pointer;}
 
 .table-card{
   background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:16px;
@@ -124,7 +141,16 @@ td.num{text-align:right;font-family:'DSEG7Classic',monospace;font-size:14px;colo
 tr:last-child td{border-bottom:none;}
 .empty{padding:26px 16px;color:var(--text-dim);font-size:13px;text-align:center;}
 
-/* ---- theme picker ---- */
+.summary-split{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.summary-card-title{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:10px;}
+.summary-totals{display:flex;gap:8px;margin-bottom:10px;}
+.summary-totals span{
+  flex:1;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:8px;
+  padding:8px;text-align:center;font-family:'DSEG7Classic',monospace;font-size:13px;color:var(--accent);
+}
+@media(max-width:700px){ .summary-split{grid-template-columns:1fr;} }
+
+/* ---- theme picker / rate popup share the same overlay look ---- */
 .overlay{
   position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:50;
   display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);
@@ -142,6 +168,25 @@ tr:last-child td{border-bottom:none;}
 .sw-blue .pill{background:linear-gradient(180deg,#05070d 0%,#4b8cff 52%,#05070d 100%);}
 .sw-black .pill{background:linear-gradient(180deg,#050506 0%,#c8c8d0 52%,#050506 100%);}
 .sw-white .pill{background:linear-gradient(180deg,#0a0a0a 0%,#f5f7fc 52%,#0a0a0a 100%);}
+
+.rate-picker{width:280px;}
+.rate-picker .noz-label{font-size:12px;color:var(--text-dim);margin-bottom:4px;}
+.rate-picker .noz-value{font-size:20px;font-weight:800;margin-bottom:16px;}
+.rate-picker input{
+  width:100%;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:10px;
+  padding:12px;color:var(--text);font-family:'DSEG7Classic',monospace;font-size:22px;
+  text-align:center;margin-bottom:16px;
+}
+.rate-picker .rate-actions{display:flex;gap:10px;}
+.rate-picker .rate-actions button{
+  flex:1;padding:11px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;border:none;
+}
+.rate-picker .btn-cancel{background:transparent;border:1px solid var(--panel-border) !important;color:var(--text-dim);}
+.rate-picker .btn-send{background:var(--accent);color:#0a0a0a;}
+body[data-theme="white"] .rate-picker .btn-send{color:#fff;}
+.rate-msg{font-size:12px;margin-top:10px;min-height:16px;}
+
+.noz-top button.gear-btn{background:none;border:none;padding:0;cursor:pointer;}
 
 @media(max-width:560px){
   .wrap{padding:16px 14px 50px;}
@@ -170,13 +215,51 @@ tr:last-child td{border-bottom:none;}
   <h2 class="section-title">Live monitor</h2>
   <div class="noz-grid" id="noz-grid"></div>
 
-  <h2 class="section-title" id="sales-title">Sales — all dispensers</h2>
+  <h2 class="section-title">Records</h2>
+  <div class="report-toggle">
+    <button id="btn-detail-mode" class="active">Detail Report</button>
+    <button id="btn-summary-mode">Summary Report</button>
+  </div>
+
+  <div class="date-row">
+    <div class="date-field"><label>Date from</label><input type="date" id="date-from"></div>
+    <div class="date-field"><label>Date to</label><input type="date" id="date-to"></div>
+    <div class="date-field">
+      <label>Time (optional)</label>
+      <input type="time" id="time-filter">
+    </div>
+    <div class="date-field"><label>&nbsp;</label><button class="btn-pill" id="btn-clear-time" type="button">Any time</button></div>
+    <div class="date-field"><label>&nbsp;</label><button class="btn-pill" id="btn-load-records" type="button">Display</button></div>
+  </div>
+
   <div class="filters" id="filters"></div>
-  <div class="table-card">
-    <table>
-      <thead><tr><th>Time</th><th>Nozzle</th><th>Product</th><th style="text-align:right">Litres</th><th style="text-align:right">Rupees</th></tr></thead>
-      <tbody id="txn-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
-    </table>
+
+  <div id="detail-view">
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Time</th><th>Nozzle</th><th>Product</th><th style="text-align:right">Litres</th><th style="text-align:right">Rupees</th></tr></thead>
+        <tbody id="txn-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="summary-view" class="summary-split" style="display:none;">
+    <div class="table-card" style="padding:16px;">
+      <div class="summary-card-title">NOZZLE SUMMARY</div>
+      <div class="summary-totals"><span id="noz-sum-ltr">LTR: 0.00</span><span id="noz-sum-rs">RS: 0.00</span></div>
+      <table>
+        <thead><tr><th>Nozzle</th><th>Product</th><th style="text-align:right">Litres</th><th style="text-align:right">Rupees</th></tr></thead>
+        <tbody id="noz-summary-body"><tr><td colspan="4" class="empty">No data yet.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-card" style="padding:16px;">
+      <div class="summary-card-title">PRODUCT SUMMARY</div>
+      <div class="summary-totals"><span id="prod-sum-ltr">LTR: 0.00</span><span id="prod-sum-rs">RS: 0.00</span></div>
+      <table>
+        <thead><tr><th>Product</th><th style="text-align:right">Litres</th><th style="text-align:right">Rupees</th></tr></thead>
+        <tbody id="prod-summary-body"><tr><td colspan="3" class="empty">No data yet.</td></tr></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -191,18 +274,34 @@ tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
+<div class="overlay" id="rate-overlay">
+  <div class="picker rate-picker">
+    <h3>Set rate remotely</h3>
+    <div class="noz-label">Nozzle</div>
+    <div class="noz-value" id="rate-noz-label">—</div>
+    <input type="number" step="0.01" min="50" id="rate-input" placeholder="e.g. 275.00">
+    <div class="rate-actions">
+      <button class="btn-cancel" id="rate-cancel">Cancel</button>
+      <button class="btn-send" id="rate-send">Send</button>
+    </div>
+    <div class="rate-msg" id="rate-msg"></div>
+  </div>
+</div>
+
 <script>
 const PRODUCT_NAMES={'0':'super','1':'diesel','2':'hi-octane','3':'kerosene'};
 const PRODUCT_COLORS={'0':'#7ee787','1':'#ff8fa3','2':'#7ee7d8','3':'#e6b260'};
 const STATUS_COLORS={'Filling':'#7ee787','Off-hook':'#7ee787','Ready':'#e6b260','On-hook':'#e6b260','Fill-done':'#c59eed','Idle':'var(--text-dim)'};
 
-let selectedNoz=null, knownNozzles=[];
+let selectedNoz=null, knownNozzles=[], myRole=null, summaryMode=false;
+let liveNozzleMap={}; // num -> nozzle object, kept in sync by the WebSocket push
 
 const fmt=(n)=>Number(n||0).toFixed(2);
 const fmtTime=(s)=>{ try{ return new Date(s).toLocaleString(undefined,{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return s; } };
+const todayStr=()=>new Date().toISOString().slice(0,10);
 
-async function api(p){
-  const r=await fetch(p);
+async function api(p,opts){
+  const r=await fetch(p,opts);
   if(r.status===401){ location.href='/'; throw new Error('auth'); }
   return r.json();
 }
@@ -210,44 +309,93 @@ async function api(p){
 async function loadMe(){
   const me=await api('/api/portal/me');
   document.getElementById('station-name').textContent=me.stationName;
+  myRole=me.role;
 }
 
-async function loadLive(){
+/* ---- live monitor: one fetch for first paint, then WebSocket push from then on ---- */
+async function loadLiveInitial(){
   const live=await api('/api/portal/live');
-  const dot=document.getElementById('live-dot'), txt=document.getElementById('live-text');
-  dot.className='live-dot'+(live.connected?'':' off');
-  txt.textContent=live.connected?'Live':'Offline';
-  txt.style.color=live.connected?'#37d67a':'#ff6e6e';
-
+  setConnected(live.connected);
   knownNozzles=live.nozzles;
-  const grid=document.getElementById('noz-grid');
-  if(!live.nozzles.length){
-    grid.innerHTML='<div class="empty">No nozzle data yet — waiting for the station to send its first reading.</div>';
-  }else{
-    grid.innerHTML=live.nozzles.map(function(n){
-      var pc=PRODUCT_COLORS[n.product]||'var(--accent)';
-      var sc=STATUS_COLORS[n.status]||'var(--text-dim)';
-      return '<div class="noz '+(selectedNoz===n.num?'sel':'')+'" data-noz="'+n.num+'">'+
-        '<div class="noz-top"><img src="/img/bar_chart.png" alt=""><img src="/img/gear.png" alt=""></div>'+
-        '<div class="noz-head">'+
-          '<div class="noz-id">'+
-            '<span class="noz-num">'+n.num+'</span>'+
-            '<svg class="bracket" viewBox="0 0 10 24"><path d="M1,2 H9 M9,2 V22" fill="none" stroke="var(--accent-2)" stroke-width="2" stroke-linecap="round"/></svg>'+
-            '<span class="noz-prod" style="color:'+pc+'">'+(PRODUCT_NAMES[n.product]||'—')+'</span>'+
-          '</div>'+
-          '<div class="noz-status"><span class="cap">STATUS</span><span class="val" style="color:'+sc+'">'+(n.status||'—').toUpperCase()+'</span></div>'+
-        '</div>'+
-        '<div class="noz-row"><span class="cap">Rupees</span><span class="val">'+fmt(n.rupees)+'</span></div>'+
-        '<div class="noz-row"><span class="cap">Litres</span><span class="val">'+fmt(n.litres)+'</span></div>'+
-        '<div class="noz-row"><span class="cap">Rate</span><span class="val">'+fmt(n.rate)+'</span></div>'+
-        '<div class="noz-total"><span class="cap">Total meter</span><span class="val">'+fmt(n.totalMeter)+'</span></div>'+
-      '</div>';
-    }).join('');
-    grid.querySelectorAll('.noz').forEach(function(el){
-      el.onclick=function(){ selectNoz(el.dataset.noz===selectedNoz?null:el.dataset.noz); };
-    });
-  }
+  liveNozzleMap={};
+  live.nozzles.forEach(function(n){ liveNozzleMap[n.num]=n; });
+  renderNozzleGrid();
   renderFilters();
+}
+
+function setConnected(connected){
+  const dot=document.getElementById('live-dot'), txt=document.getElementById('live-text');
+  dot.className='live-dot'+(connected?'':' off');
+  txt.textContent=connected?'Live':'Offline';
+  txt.style.color=connected?'#37d67a':'#ff6e6e';
+}
+
+function renderNozzleGrid(){
+  const nozzles=Object.values(liveNozzleMap).sort(function(a,b){ return a.num.localeCompare(b.num); });
+  knownNozzles=nozzles;
+  const grid=document.getElementById('noz-grid');
+  if(!nozzles.length){
+    grid.innerHTML='<div class="empty">No nozzle data yet — waiting for the station to send its first reading.</div>';
+    return;
+  }
+  grid.innerHTML=nozzles.map(function(n){
+    var pc=PRODUCT_COLORS[n.product]||'var(--accent)';
+    var sc=STATUS_COLORS[n.status]||'var(--text-dim)';
+    var gearBtn=myRole==='owner'
+      ? '<button class="gear-btn" data-rate-noz="'+n.num+'"><img src="/img/gear.png" alt="Set rate"></button>'
+      : '<img src="/img/gear.png" alt="" style="opacity:.25">';
+    return '<div class="noz '+(selectedNoz===n.num?'sel':'')+'" data-noz="'+n.num+'">'+
+      '<div class="noz-top"><img src="/img/bar_chart.png" alt="">'+gearBtn+'</div>'+
+      '<div class="noz-head">'+
+        '<div class="noz-id">'+
+          '<span class="noz-num">'+n.num+'</span>'+
+          '<svg class="bracket" viewBox="0 0 10 24"><path d="M1,2 H9 M9,2 V22" fill="none" stroke="var(--accent-2)" stroke-width="2" stroke-linecap="round"/></svg>'+
+          '<span class="noz-prod" style="color:'+pc+'">'+(PRODUCT_NAMES[n.product]||'—')+'</span>'+
+        '</div>'+
+        '<div class="noz-status"><span class="cap">STATUS</span><span class="val" style="color:'+sc+'">'+(n.status||'—').toUpperCase()+'</span></div>'+
+      '</div>'+
+      '<div class="noz-row"><span class="cap">Rupees</span><span class="val">'+fmt(n.rupees)+'</span></div>'+
+      '<div class="noz-row"><span class="cap">Litres</span><span class="val">'+fmt(n.litres)+'</span></div>'+
+      '<div class="noz-row"><span class="cap">Rate</span><span class="val">'+fmt(n.rate)+'</span></div>'+
+      '<div class="noz-total"><span class="cap">Total meter</span><span class="val">'+fmt(n.totalMeter)+'</span></div>'+
+    '</div>';
+  }).join('');
+
+  grid.querySelectorAll('.noz').forEach(function(el){
+    el.onclick=function(e){
+      if(e.target.closest('[data-rate-noz]')) return; // gear click handled separately below
+      selectNoz(el.dataset.noz===selectedNoz?null:el.dataset.noz);
+    };
+  });
+  grid.querySelectorAll('[data-rate-noz]').forEach(function(btn){
+    btn.onclick=function(e){ e.stopPropagation(); openRatePopup(btn.dataset.rateNoz); };
+  });
+}
+
+/* ---- live push over WebSocket, with reconnect-with-backoff same spirit as the
+   station's own uplink - simple polling is what this whole feature replaces. ---- */
+let liveSocket=null, liveBackoffMs=1000;
+function connectLiveSocket(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  liveSocket=new WebSocket(proto+'//'+location.host+'/ws/live');
+  liveSocket.onopen=function(){ liveBackoffMs=1000; };
+  liveSocket.onmessage=function(ev){
+    try{
+      var msg=JSON.parse(ev.data);
+      if(msg.type==='live' && msg.data && msg.data.num){
+        liveNozzleMap[msg.data.num]=msg.data;
+        setConnected(true);
+        renderNozzleGrid();
+        renderFilters();
+      }
+    }catch(e){ /* ignore malformed frame */ }
+  };
+  liveSocket.onclose=function(){
+    setConnected(false);
+    setTimeout(connectLiveSocket, liveBackoffMs);
+    liveBackoffMs=Math.min(liveBackoffMs*2, 15000);
+  };
+  liveSocket.onerror=function(){ liveSocket.close(); };
 }
 
 function renderFilters(){
@@ -263,12 +411,83 @@ function renderFilters(){
 
 function selectNoz(n){
   selectedNoz=n;
-  document.getElementById('sales-title').textContent=n?('Sales — nozzle '+n):'Sales — all dispensers';
-  loadLive(); loadTxns();
+  renderFilters();
+  renderNozzleGrid();
 }
 
-async function loadTxns(){
-  var rows=await api('/api/portal/transactions'+(selectedNoz?('?noz='+encodeURIComponent(selectedNoz)):''));
+/* ---- rate popup (#8: remote rate-setting, owner-only) ---- */
+var rateOverlay=document.getElementById('rate-overlay');
+var currentRateNoz=null;
+function openRatePopup(noz){
+  currentRateNoz=noz;
+  document.getElementById('rate-noz-label').textContent='Nozzle '+noz;
+  document.getElementById('rate-input').value='';
+  document.getElementById('rate-msg').textContent='';
+  rateOverlay.classList.add('open');
+}
+document.getElementById('rate-cancel').onclick=function(){ rateOverlay.classList.remove('open'); };
+rateOverlay.onclick=function(e){ if(e.target===rateOverlay) rateOverlay.classList.remove('open'); };
+document.getElementById('rate-send').onclick=async function(){
+  var rate=document.getElementById('rate-input').value;
+  var msg=document.getElementById('rate-msg');
+  var res=await api('/api/portal/rate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({noz:currentRateNoz,rate:rate})});
+  if(res.ok){
+    msg.style.color='#7ee787';
+    msg.textContent='Sent.';
+    setTimeout(function(){ rateOverlay.classList.remove('open'); },700);
+  }else{
+    msg.style.color='#ff8fa3';
+    msg.textContent=res.error||'Could not send.';
+  }
+};
+
+/* ---- Records: Detail Report / Summary Report (#7) ---- */
+document.getElementById('date-from').value=todayStr();
+document.getElementById('date-to').value=todayStr();
+
+document.getElementById('btn-detail-mode').onclick=function(){
+  summaryMode=false;
+  document.getElementById('btn-detail-mode').classList.add('active');
+  document.getElementById('btn-summary-mode').classList.remove('active');
+  document.getElementById('detail-view').style.display='';
+  document.getElementById('summary-view').style.display='none';
+};
+document.getElementById('btn-summary-mode').onclick=function(){
+  summaryMode=true;
+  document.getElementById('btn-summary-mode').classList.add('active');
+  document.getElementById('btn-detail-mode').classList.remove('active');
+  document.getElementById('detail-view').style.display='none';
+  document.getElementById('summary-view').style.display='';
+};
+document.getElementById('btn-clear-time').onclick=function(){ document.getElementById('time-filter').value=''; };
+
+function buildFilterBody(){
+  var timeVal=document.getElementById('time-filter').value; // "HH:MM" or ""
+  var body={
+    dateStart:document.getElementById('date-from').value||todayStr(),
+    dateEnd:document.getElementById('date-to').value||todayStr(),
+    nozzles: selectedNoz ? [selectedNoz] : undefined
+  };
+  if(timeVal){
+    var parts=timeVal.split(':');
+    body.hour=parseInt(parts[0],10);
+    body.minute=parseInt(parts[1],10);
+  }
+  return body;
+}
+
+document.getElementById('btn-load-records').onclick=async function(){
+  var body=buildFilterBody();
+  if(summaryMode){
+    var res=await api('/api/portal/records/summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    renderSummary(res);
+  }else{
+    var rows=await api('/api/portal/records/detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    renderDetail(rows);
+  }
+};
+
+function renderDetail(rows){
   var body=document.getElementById('txn-body');
   body.innerHTML=rows.length?rows.map(function(r){
       return '<tr><td>'+fmtTime(r.station_timestamp||r.received_at)+'</td>'+
@@ -277,7 +496,32 @@ async function loadTxns(){
         '<td class="num">'+fmt(r.ltr)+'</td>'+
         '<td class="num">'+fmt(r.rup)+'</td></tr>';
     }).join('')
-    :'<tr><td colspan="5" class="empty">No transactions yet.</td></tr>';
+    :'<tr><td colspan="5" class="empty">No records for this filter.</td></tr>';
+}
+
+function renderSummary(res){
+  var nozRows=res.nozzleSummary||[], prodRows=res.productSummary||[];
+  var nozLtr=0,nozRs=0,prodLtr=0,prodRs=0;
+
+  var nozBody=document.getElementById('noz-summary-body');
+  nozBody.innerHTML=nozRows.length?nozRows.map(function(r){
+      nozLtr+=Number(r.tot_ltrs||0); nozRs+=Number(r.tot_rups||0);
+      return '<tr><td>'+r.noz+'</td><td>'+(PRODUCT_NAMES[r.product]||r.product)+'</td>'+
+        '<td class="num">'+fmt(r.tot_ltrs)+'</td><td class="num">'+fmt(r.tot_rups)+'</td></tr>';
+    }).join('')
+    :'<tr><td colspan="4" class="empty">No records for this filter.</td></tr>';
+  document.getElementById('noz-sum-ltr').textContent='LTR: '+fmt(nozLtr);
+  document.getElementById('noz-sum-rs').textContent='RS: '+fmt(nozRs);
+
+  var prodBody=document.getElementById('prod-summary-body');
+  prodBody.innerHTML=prodRows.length?prodRows.map(function(r){
+      prodLtr+=Number(r.tot_ltrs||0); prodRs+=Number(r.tot_rups||0);
+      return '<tr><td>'+(PRODUCT_NAMES[r.product]||r.product)+'</td>'+
+        '<td class="num">'+fmt(r.tot_ltrs)+'</td><td class="num">'+fmt(r.tot_rups)+'</td></tr>';
+    }).join('')
+    :'<tr><td colspan="3" class="empty">No records for this filter.</td></tr>';
+  document.getElementById('prod-sum-ltr').textContent='LTR: '+fmt(prodLtr);
+  document.getElementById('prod-sum-rs').textContent='RS: '+fmt(prodRs);
 }
 
 /* theme picker */
@@ -298,9 +542,12 @@ document.getElementById('btn-logout').onclick=async function(){
   location.href='/';
 };
 
-loadMe(); loadLive(); loadTxns();
-setInterval(loadLive,5000);
-setInterval(loadTxns,15000);
+(async function start(){
+  await loadMe();
+  await loadLiveInitial();
+  connectLiveSocket();
+  document.getElementById('btn-load-records').click();
+})();
 </script>
 </body>
 </html>

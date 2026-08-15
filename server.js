@@ -1,5 +1,6 @@
 'use strict';
 const path = require('path');
+const crypto = require('crypto');
 const http = require('http');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
@@ -32,6 +33,19 @@ function publicBaseUrl(req) {
 }
 const COOKIE_NAME = 'ftc_session';
 const SETUP_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const SETUP_CODE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days - installs can happen well after the code was generated
+
+// Same safe alphabet as lib/license.js's license keys - excludes 0/O/1/I/L so
+// a code read aloud or handwritten on a batch sheet doesn't get mistyped.
+const SETUP_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+function generateSetupCode() {
+  let code = '';
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) code += '-';
+    code += SETUP_CODE_ALPHABET[crypto.randomInt(SETUP_CODE_ALPHABET.length)];
+  }
+  return code;
+}
 
 function newSetupToken() {
   return { setupToken: randomToken(24), setupTokenExpiresAt: new Date(Date.now() + SETUP_TOKEN_TTL_MS).toISOString() };
@@ -199,6 +213,52 @@ app.post('/api/checkin', async (req, res) => {
   });
 });
 
+// ---- one-time station provisioning code (public - the code itself is the
+// credential, single-use, and expires - see /api/admin/setup-codes below for
+// how an admin generates a batch of these ahead of time). This is what lets
+// an installer just type a short code into a brand-new install instead of
+// looking up hardware IDs and hand-building sigma_123.lic / central_config.json. ----
+app.post('/api/setup-code/redeem', async (req, res) => {
+  const { code, mb, cpu } = req.body || {};
+  if (!code || !mb || !cpu) {
+    return res.status(400).json({ ok: false, error: 'code, mb, and cpu are required.' });
+  }
+
+  const normalizedCode = String(code).trim().toUpperCase();
+  const row = await db.getSetupCode(normalizedCode);
+  if (!row) return res.status(404).json({ ok: false, error: 'Invalid code.' });
+  if (row.used_at) return res.status(410).json({ ok: false, error: 'This code has already been used.' });
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    return res.status(410).json({ ok: false, error: 'This code has expired - ask your admin for a new one.' });
+  }
+
+  const station = await db.getStationById(row.station_id);
+  if (!station) return res.status(404).json({ ok: false, error: 'Station not found.' });
+
+  // Deterministic, same algorithm the app itself uses - see lib/license.js.
+  const licenseKey = computeSerial(mb, cpu);
+  await db.setLicense(station.id, { mb, cpu, licenseKey });
+
+  // A fresh API key, generated here and only here - this is the one and only
+  // moment its plaintext ever exists. It goes straight into this response and
+  // then into the app's central_config.json; no human ever sees or types it.
+  const apiKey = randomToken(20);
+  const { salt, hash } = hashPassword(apiKey);
+  await db.setApiKey(station.id, { apiKeyHash: hash, apiKeySalt: salt });
+
+  await db.markSetupCodeUsed(normalizedCode);
+
+  res.json({
+    ok: true,
+    licenseKey,
+    stationId: station.id,
+    apiKey,
+    centralUrl: publicBaseUrl(req),
+    stationName: station.name
+  });
+});
+
+
 // ---- one-time setup links (public - the token itself is the credential) ----
 app.get('/setup/:token', async (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'setup.html'));
@@ -288,6 +348,81 @@ app.get('/api/portal/transactions', async (req, res) => {
   res.json(await db.listStationTransactions(req.station.id, limit, noz));
 });
 
+// Remote rate-setting (#8). Owner-only, enforced HERE regardless of what the UI shows -
+// req.stationUser.role is re-derived from the session on every request (see
+// resolveStationUser), never trusted from anything the client sent. Responds as soon as
+// the command is handed to the station's WebSocket - it does not wait for the station's
+// rate_ack, which arrives separately and just updates the audit log (see the rate_ack
+// case in wssStation above). No confirmation step by design (per product decision).
+app.post('/api/portal/rate', async (req, res) => {
+  if (req.stationUser.role !== 'owner') {
+    return res.status(403).json({ ok: false, error: 'Only the station owner can change rates remotely.' });
+  }
+
+  const { noz, rate } = req.body || {};
+  const rateNum = parseFloat(rate);
+  if (!noz || !Number.isFinite(rateNum) || rateNum < 50) {
+    return res.status(400).json({ ok: false, error: 'Enter a nozzle and a rate of at least Rs 50.' });
+  }
+
+  const ws = stationConnections.get(req.station.id);
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return res.status(409).json({ ok: false, error: 'This station is not currently connected.' });
+  }
+
+  const requestId = crypto.randomUUID();
+  const newRateStr = rateNum.toFixed(2);
+
+  const liveSnapshot = liveState.snapshot(req.station.id);
+  const oldRate = liveSnapshot.nozzles.find((n) => n.num === noz)?.rate ?? null;
+
+  try {
+    await db.logRateChange({
+      requestId, stationId: req.station.id, noz,
+      oldRate, newRate: newRateStr, changedByUsername: req.stationUser.username
+    });
+  } catch (e) {
+    console.error('[portal/rate] failed to write audit log:', e.message);
+    // Still proceed - losing the audit row is not a reason to block the actual rate change.
+  }
+
+  ws.send(JSON.stringify({ type: 'set_rate', noz, rate: newRateStr, requestId }));
+  res.json({ ok: true, requestId });
+});
+
+app.get('/api/portal/rate-history', async (req, res) => {
+  if (req.stationUser.role !== 'owner') {
+    return res.status(403).json({ ok: false, error: 'Only the station owner can view the rate change log.' });
+  }
+  res.json(await db.listRateChanges(req.station.id, 50));
+});
+
+// Cloud-side Detail/Summary records (#7) - mirrors the station app's own ReportPanel
+// split, but reads from station_transactions in Turso instead of the station's local
+// SQLite, and only covers sales sent since the uplink went live (no backfill, by
+// deliberate choice).
+function parsePortalFilters(body) {
+  const products = Array.isArray(body.products) && body.products.length ? body.products : ['0', '1', '2', '3'];
+  const nozzles = Array.isArray(body.nozzles) && body.nozzles.length
+    ? body.nozzles
+    : Array.from({ length: 24 }, (_, i) => String(i + 1).padStart(2, '0'));
+  const dateStart = body.dateStart || new Date().toISOString().slice(0, 10);
+  const dateEnd = body.dateEnd || new Date().toISOString().slice(0, 10);
+  const hour = Number.isInteger(body.hour) ? body.hour : null;
+  const minute = Number.isInteger(body.minute) ? body.minute : null;
+  return { products, nozzles, dateStart, dateEnd, hour, minute };
+}
+
+app.post('/api/portal/records/detail', async (req, res) => {
+  const filters = parsePortalFilters(req.body || {});
+  res.json(await db.listRecordsDetail(req.station.id, filters));
+});
+
+app.post('/api/portal/records/summary', async (req, res) => {
+  const filters = parsePortalFilters(req.body || {});
+  res.json(await db.getRecordsSummary(req.station.id, filters));
+});
+
 app.post('/api/portal/logout', (req, res) => {
   const token = req.cookies[COOKIE_NAME];
   if (token) sessions.destroy(token);
@@ -362,6 +497,41 @@ app.post('/api/admin/stations', requireAdmin, async (req, res) => {
     // Shown once - only the hash is stored. Put this in the station's config.json.
     apiKey
   });
+});
+
+// Generates 1-200 stations at once, each with its own one-time provisioning
+// code - the batch-install case (e.g. 100 new laptops). Each station starts
+// with a throwaway placeholder API key (never meant to work); the real one is
+// generated fresh when the code is redeemed - see /api/setup-code/redeem.
+app.post('/api/admin/setup-codes', requireAdmin, async (req, res) => {
+  const { namePrefix, count } = req.body || {};
+  const n = Math.min(Math.max(parseInt(count, 10) || 1, 1), 200);
+  const prefix = (namePrefix && namePrefix.trim()) || 'New station';
+
+  const results = [];
+  for (let i = 0; i < n; i++) {
+    const stationName = n === 1 ? prefix : `${prefix} ${i + 1}`;
+
+    const placeholderKey = randomToken(20);
+    const { salt, hash } = hashPassword(placeholderKey);
+    const station = await db.createStation({ name: stationName, ownerUserId: null, address: null, apiKeyHash: hash, apiKeySalt: salt });
+
+    const code = generateSetupCode();
+    const expiresAt = new Date(Date.now() + SETUP_CODE_TTL_MS).toISOString();
+    await db.createSetupCode({ code, stationId: station.id, expiresAt });
+
+    results.push({ code, stationId: station.id, stationName });
+  }
+
+  res.json({ ok: true, codes: results });
+});
+
+app.get('/api/admin/setup-codes', requireAdmin, async (req, res) => {
+  const rows = await db.listSetupCodes();
+  res.json(rows.map((r) => ({
+    code: r.code, stationId: r.station_id, stationName: r.station_name,
+    createdAt: r.created_at, expiresAt: r.expires_at, usedAt: r.used_at
+  })));
 });
 
 app.post('/api/admin/stations/:id/subscription', requireAdmin, async (req, res) => {
@@ -496,6 +666,10 @@ const server = http.createServer(app);
 //   -> {type:'ping'}                                <- {type:'pong'}
 const wssStation = new WebSocketServer({ server, path: '/ws/station' });
 
+// stationId -> live WebSocket connection, so a remote command (e.g. a rate change from
+// the portal) can be pushed down to the right station instead of only ever receiving.
+const stationConnections = new Map();
+
 wssStation.on('connection', (ws) => {
   let authed = false;
   let station = null;
@@ -521,6 +695,7 @@ wssStation.on('connection', (ws) => {
       }
       station = st;
       authed = true;
+      stationConnections.set(station.id, ws);
       liveState.setConnected(station.id, true);
       send({ type: 'auth_ok' });
       return;
@@ -535,6 +710,7 @@ wssStation.on('connection', (ws) => {
 
     if (msg.type === 'live' && msg.kind === 'nozzle' && msg.data) {
       liveState.updateNozzle(station.id, msg.data); // ephemeral - never touches Turso
+      broadcastLiveUpdate(station.id, msg.data);
       return;
     }
 
@@ -543,6 +719,7 @@ wssStation.on('connection', (ws) => {
         if (msg.kind === 'nozzle') {
           await db.upsertNozzleState(station.id, msg.id, msg.data);
           liveState.updateNozzle(station.id, msg.data);
+          broadcastLiveUpdate(station.id, msg.data);
         } else if (msg.kind === 'transaction') {
           await db.insertStationTransaction(station.id, msg.id, msg.data);
         } else {
@@ -559,14 +736,67 @@ wssStation.on('connection', (ws) => {
       send({ type: 'ack', id: msg.id });
       return;
     }
+
+    if (msg.type === 'rate_ack' && msg.requestId) {
+      // Fire-and-forget - the portal already got its immediate response when the
+      // command was sent; this just updates the audit log with the real outcome.
+      db.markRateChangeResult(msg.requestId, !!msg.ok, msg.message || null)
+        .catch((e) => console.error('[ws/station] failed to record rate_ack:', e.message));
+      return;
+    }
   });
 
   ws.on('close', () => {
-    if (station) liveState.setConnected(station.id, false);
+    if (station) {
+      liveState.setConnected(station.id, false);
+      if (stationConnections.get(station.id) === ws) stationConnections.delete(station.id);
+    }
   });
 
   ws.on('error', () => { /* 'close' always follows */ });
 });
+
+// ---- browser-facing live push (#9: instant updates instead of 5s polling) ----
+// Auth reuses the exact same session cookie the regular HTTP routes check - a WebSocket
+// upgrade request still carries cookies, it just isn't run through Express's own cookie
+// middleware, hence parseCookies here instead of req.cookies.
+const wssBrowser = new WebSocketServer({ server, path: '/ws/live' });
+const browserClients = new Map(); // ws -> { kind: 'admin' | 'station_user', stationId: string|null }
+
+wssBrowser.on('connection', async (ws, req) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sess = sessions.get(cookies[COOKIE_NAME]);
+  if (!sess) { ws.close(); return; }
+
+  if (sess.kind === 'admin') {
+    browserClients.set(ws, { kind: 'admin', stationId: null }); // admin sees every station
+  } else if (sess.kind === 'station_user') {
+    const su = await db.getStationUserById(sess.id);
+    if (!su) { ws.close(); return; }
+    browserClients.set(ws, { kind: 'station_user', stationId: su.station_id });
+  } else {
+    ws.close();
+    return;
+  }
+
+  ws.on('close', () => browserClients.delete(ws));
+  ws.on('error', () => { /* 'close' always follows */ });
+});
+
+// Called from wssStation's message handler above on every live tick and every durable
+// nozzle-state event - deliberately NOT logged (console.log per packet would spam the
+// server logs at several times a second per station, which is exactly what "don't show
+// every packet on central" ruled out).
+function broadcastLiveUpdate(stationId, nozzleData) {
+  if (browserClients.size === 0) return;
+  const payload = JSON.stringify({ type: 'live', stationId, data: nozzleData });
+  for (const [client, info] of browserClients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (info.kind === 'admin' || info.stationId === stationId) {
+      try { client.send(payload); } catch { /* ignore - its own 'close' will clean it up */ }
+    }
+  }
+}
 
 db.init().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
