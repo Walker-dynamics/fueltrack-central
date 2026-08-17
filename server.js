@@ -684,6 +684,11 @@ wssStation.on('connection', (ws, req) => {
     }
   };
 
+  // Send something back immediately, before waiting on the client's auth message.
+  // A passive connection that sits silent after the 101 upgrade looks like a hung
+  // backend to some edge proxies, which then kill it (observed as an instant 1006).
+  send({ type: 'ready' });
+
   ws.on('message', async (raw) => {
     console.log(`[ws/station] message received, bytes=${raw.length}`);
     let msg;
