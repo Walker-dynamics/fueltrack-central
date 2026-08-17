@@ -670,9 +670,13 @@ const wssStation = new WebSocketServer({ server, path: '/ws/station', perMessage
 // the portal) can be pushed down to the right station instead of only ever receiving.
 const stationConnections = new Map();
 
-wssStation.on('connection', (ws) => {
+wssStation.on('connection', (ws, req) => {
+  console.log(`[ws/station] CONNECTION opened from ${req?.socket?.remoteAddress} url=${req?.url}`);
   let authed = false;
   let station = null;
+
+  ws.on('error', (e) => console.log('[ws/station] socket ERROR:', e.message));
+  ws.on('close', (code, reason) => console.log(`[ws/station] CLOSED code=${code} reason=${reason ? reason.toString() : ''}`));
 
   const send = (obj) => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -681,11 +685,20 @@ wssStation.on('connection', (ws) => {
   };
 
   ws.on('message', async (raw) => {
+    console.log(`[ws/station] message received, bytes=${raw.length}`);
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     if (msg.type === 'auth') {
-      const st = typeof msg.stationId === 'string' ? await db.getStationById(msg.stationId) : null;
+      let st = null;
+      try {
+        st = typeof msg.stationId === 'string' ? await db.getStationById(msg.stationId) : null;
+      } catch (e) {
+        console.log('[ws/station] getStationById ERROR:', e.message);
+        send({ type: 'auth_fail', error: 'Server error.' });
+        ws.close();
+        return;
+      }
       const valid = st && typeof msg.apiKey === 'string' &&
         verifyPassword(msg.apiKey, st.api_key_salt, st.api_key_hash);
       console.log(`[ws/station] auth attempt: stationId=${msg.stationId} valid=${valid}`);
@@ -767,9 +780,10 @@ const wssBrowser = new WebSocketServer({ server, path: '/ws/live' });
 const browserClients = new Map(); // ws -> { kind: 'admin' | 'station_user', stationId: string|null }
 
 wssBrowser.on('connection', async (ws, req) => {
+  console.log(`[ws/live] CONNECTION opened from ${req?.socket?.remoteAddress}`);
   const cookies = parseCookies(req.headers.cookie);
   const sess = sessions.get(cookies[COOKIE_NAME]);
-  if (!sess) { ws.close(); return; }
+  if (!sess) { console.log('[ws/live] no valid session cookie - closing'); ws.close(); return; }
 
   if (sess.kind === 'admin') {
     browserClients.set(ws, { kind: 'admin', stationId: null }); // admin sees every station
