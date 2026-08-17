@@ -688,6 +688,7 @@ wssStation.on('connection', (ws) => {
       const st = typeof msg.stationId === 'string' ? await db.getStationById(msg.stationId) : null;
       const valid = st && typeof msg.apiKey === 'string' &&
         verifyPassword(msg.apiKey, st.api_key_salt, st.api_key_hash);
+      console.log(`[ws/station] auth attempt: stationId=${msg.stationId} valid=${valid}`);
       if (!valid) {
         send({ type: 'auth_fail', error: 'Invalid station credentials.' });
         ws.close();
