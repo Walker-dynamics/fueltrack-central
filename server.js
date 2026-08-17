@@ -664,7 +664,7 @@ const server = http.createServer(app);
 //   -> {type:'event', id, kind:'nozzle'|'transaction', data, ts}   <- {type:'ack', id}
 //   -> {type:'live', kind:'nozzle', data, ts}       (no ack, no persistence)
 //   -> {type:'ping'}                                <- {type:'pong'}
-const wssStation = new WebSocketServer({ server, path: '/ws/station' });
+const wssStation = new WebSocketServer({ server, path: '/ws/station', perMessageDeflate: false });
 
 // stationId -> live WebSocket connection, so a remote command (e.g. a rate change from
 // the portal) can be pushed down to the right station instead of only ever receiving.
