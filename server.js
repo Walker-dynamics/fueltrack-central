@@ -742,6 +742,18 @@ wssStation.on('connection', (ws, req) => {
           broadcastLiveUpdate(station.id, msg.data);
         } else if (msg.kind === 'transaction') {
           await db.insertStationTransaction(station.id, msg.id, msg.data);
+        } else if (msg.kind === 'rate_change') {
+          // Locally-triggered (station Update button) - already applied by the time we
+          // hear about it, so log it as already-acked, same table as portal-triggered changes.
+          await db.logRateChange({
+            requestId: msg.id,
+            stationId: station.id,
+            noz: msg.data.noz,
+            oldRate: msg.data.oldRate,
+            newRate: msg.data.newRate,
+            changedByUsername: '(station app)'
+          });
+          await db.markRateChangeResult(msg.id, true, 'Changed locally at the station.');
         } else {
           return; // unrecognized kind - drop silently, don't ack, don't crash
         }
