@@ -664,7 +664,7 @@ const server = http.createServer(app);
 //   -> {type:'event', id, kind:'nozzle'|'transaction', data, ts}   <- {type:'ack', id}
 //   -> {type:'live', kind:'nozzle', data, ts}       (no ack, no persistence)
 //   -> {type:'ping'}                                <- {type:'pong'}
-const wssStation = new WebSocketServer({ server, path: '/ws/station', perMessageDeflate: false });
+const wssStation = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
 // stationId -> live WebSocket connection, so a remote command (e.g. a rate change from
 // the portal) can be pushed down to the right station instead of only ever receiving.
@@ -683,11 +683,6 @@ wssStation.on('connection', (ws, req) => {
       try { ws.send(JSON.stringify(obj)); } catch { /* connection is on its way out; 'close' will follow */ }
     }
   };
-
-  // Send something back immediately, before waiting on the client's auth message.
-  // A passive connection that sits silent after the 101 upgrade looks like a hung
-  // backend to some edge proxies, which then kill it (observed as an instant 1006).
-  send({ type: 'ready' });
 
   ws.on('message', async (raw) => {
     console.log(`[ws/station] message received, bytes=${raw.length}`);
@@ -793,8 +788,26 @@ wssStation.on('connection', (ws, req) => {
 // Auth reuses the exact same session cookie the regular HTTP routes check - a WebSocket
 // upgrade request still carries cookies, it just isn't run through Express's own cookie
 // middleware, hence parseCookies here instead of req.cookies.
-const wssBrowser = new WebSocketServer({ server, path: '/ws/live' });
+const wssBrowser = new WebSocketServer({ noServer: true });
 const browserClients = new Map(); // ws -> { kind: 'admin' | 'station_user', stationId: string|null }
+
+// Single upgrade handler routes by path. Two WebSocketServers each with their own
+// `path` option on the same http server race each other's 'upgrade' event and one
+// rejects the other's handshake (seen as a 400 / instant 1006). Routing manually
+// with noServer avoids that entirely.
+server.on('upgrade', (req, socket, head) => {
+  let pathname;
+  try { pathname = new URL(req.url, 'http://localhost').pathname; }
+  catch { socket.destroy(); return; }
+
+  if (pathname === '/ws/station') {
+    wssStation.handleUpgrade(req, socket, head, (ws) => wssStation.emit('connection', ws, req));
+  } else if (pathname === '/ws/live') {
+    wssBrowser.handleUpgrade(req, socket, head, (ws) => wssBrowser.emit('connection', ws, req));
+  } else {
+    socket.destroy();
+  }
+});
 
 wssBrowser.on('connection', async (ws, req) => {
   console.log(`[ws/live] CONNECTION opened from ${req?.socket?.remoteAddress}`);
