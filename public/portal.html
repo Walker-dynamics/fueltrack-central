@@ -146,7 +146,7 @@ tr:last-child td{border-bottom:none;}
 .summary-totals{display:flex;gap:8px;margin-bottom:10px;}
 .summary-totals span{
   flex:1;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:8px;
-  padding:8px;text-align:center;font-family:'DSEG7Classic',monospace;font-size:13px;color:var(--accent);
+  padding:8px;text-align:center;font-family:'Arial Black',Gadget,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.5px;color:var(--accent);
 }
 @media(max-width:700px){ .summary-split{grid-template-columns:1fr;} }
 
@@ -279,7 +279,7 @@ body[data-theme="white"] .rate-picker .btn-send{color:#fff;}
     <h3>Set rate remotely</h3>
     <div class="noz-label">Nozzle</div>
     <div class="noz-value" id="rate-noz-label">—</div>
-    <input type="number" step="0.01" min="50" id="rate-input" placeholder="e.g. 275.00">
+    <input type="number" step="0.01" min="50" id="rate-input" placeholder="000.00">
     <div class="rate-actions">
       <button class="btn-cancel" id="rate-cancel">Cancel</button>
       <button class="btn-send" id="rate-send">Send</button>
