@@ -556,6 +556,22 @@ app.delete('/api/admin/stations/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Issues a fresh setup code for an EXISTING station - the re-provisioning case:
+// the station's PC was replaced, or its sigma_123.lic / central_config.json were
+// lost. Redeeming this code regenerates that station's license and API key while
+// keeping the same station id, so it keeps its history instead of turning into a
+// duplicate station. (The batch endpoint above creates NEW stations instead.)
+app.post('/api/admin/stations/:id/setup-code', requireAdmin, async (req, res) => {
+  const station = await db.getStationById(req.params.id);
+  if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });
+
+  const code = generateSetupCode();
+  const expiresAt = new Date(Date.now() + SETUP_CODE_TTL_MS).toISOString();
+  await db.createSetupCode({ code, stationId: station.id, expiresAt });
+
+  res.json({ ok: true, code, stationId: station.id, stationName: station.name });
+});
+
 app.post('/api/admin/stations/:id/license', requireAdmin, async (req, res) => {
   const station = await db.getStationById(req.params.id);
   if (!station) return res.status(404).json({ ok: false, error: 'No such station.' });

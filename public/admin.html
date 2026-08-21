@@ -108,6 +108,14 @@ code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radi
 }
 .setup-code:hover{background:#1c2430;}
 .setup-code.used{background:#F2F4F7;color:var(--text-3);text-decoration:line-through;cursor:default;}
+
+.btn-recode{
+  margin-top:5px;border:1px solid var(--border);background:var(--surface);
+  color:var(--text-2);padding:3px 8px;border-radius:6px;
+  font-size:10.5px;font-family:inherit;cursor:pointer;
+  transition:background .15s ease,color .15s ease,border-color .15s ease;
+}
+.btn-recode:hover{background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border);}
 </style>
 </head>
 <body>
@@ -204,7 +212,9 @@ async function loadStations() {
     `<tr class="head"><td>Name</td><td>Owner</td><td>Address</td><td>Subscription</td><td>License</td><td>Last check-in</td><td></td></tr>` +
     stations.map((s) => `
       <tr>
-        <td>${s.name}<br><code class="station-id" data-copy-id="${s.id}" title="Click to copy - needed for this station's config.json">${s.id}</code></td>
+        <td>${s.name}<br><code class="station-id" data-copy-id="${s.id}" title="Click to copy - needed for this station's config.json">${s.id}</code>
+          <br><button class="btn-recode" data-recode="${s.id}" data-name="${s.name}"
+              title="Issue a fresh setup code for this same station - use it if its PC was replaced or its files were lost">↻ New setup code</button></td>
         <td>${s.ownerEmail || '<span class="muted">unassigned</span>'}</td>
         <td>${s.address || '<span class="muted">—</span>'}</td>
         <td><span class="pill ${s.subscriptionActive ? 'on' : 'off'}">${s.subscriptionActive ? 'Active' : 'Inactive'}
@@ -265,6 +275,19 @@ async function loadStations() {
       const res = await api(`/api/admin/stations/${btn.dataset.delete}`, { method: 'DELETE' });
       if (res.ok) loadStations();
       else alert(res.error || 'Failed to delete station.');
+    };
+  });
+  document.querySelectorAll('[data-recode]').forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm(`Issue a new setup code for "${btn.dataset.name}"?\n\n`
+        + `The station keeps its ID and all its history. Its current license and API key stop working once the new code is used.`)) return;
+      const res = await api(`/api/admin/stations/${btn.dataset.recode}/setup-code`, { method: 'POST' });
+      if (res.ok) {
+        alert(`Setup code for ${res.stationName}:\n\n${res.code}\n\nType this into the app's setup screen on that PC.`);
+        loadSetupCodes();
+      } else {
+        alert(res.error || 'Failed to create setup code.');
+      }
     };
   });
   document.querySelectorAll('[data-accounts]').forEach((btn) => {
