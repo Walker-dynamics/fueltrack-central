@@ -58,6 +58,56 @@ code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radi
 .noz-mini .row{display:flex;justify-content:space-between;color:var(--text-2);}
 .noz-mini .row b{color:var(--text);font-variant-numeric:tabular-nums;}
 .txn-toggle{font-size:11.5px;color:var(--accent);cursor:pointer;text-decoration:underline;background:none;border:none;font-family:inherit;padding:0;}
+
+/* ---- Setup codes: 3D black glossy glass ---- */
+.btn-glass{
+  position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.14);
+  background:linear-gradient(160deg,#3a3f46 0%,#1c1f24 42%,#0b0d10 100%);
+  color:#f2f4f7;padding:9px 20px;border-radius:10px;
+  font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer;
+  white-space:nowrap;letter-spacing:.2px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.22) inset,
+    0 -1px 0 rgba(0,0,0,.55) inset,
+    0 6px 14px rgba(0,0,0,.34),
+    0 2px 4px rgba(0,0,0,.28);
+  transition:transform .16s ease, box-shadow .16s ease, filter .16s ease;
+}
+/* the glass highlight across the top half */
+.btn-glass::before{
+  content:'';position:absolute;left:0;right:0;top:0;height:48%;
+  background:linear-gradient(180deg,rgba(255,255,255,.30),rgba(255,255,255,.04));
+  border-radius:10px 10px 40% 40%/10px 10px 12px 12px;pointer-events:none;
+}
+/* sheen that sweeps across on hover */
+.btn-glass::after{
+  content:'';position:absolute;top:0;bottom:0;left:-60%;width:45%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent);
+  transform:skewX(-18deg);transition:left .55s ease;pointer-events:none;
+}
+.btn-glass:hover{
+  transform:translateY(-2px);filter:brightness(1.14);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.30) inset,
+    0 -1px 0 rgba(0,0,0,.55) inset,
+    0 12px 24px rgba(0,0,0,.42),
+    0 3px 7px rgba(0,0,0,.30);
+}
+.btn-glass:hover::after{left:120%;}
+.btn-glass:active{
+  transform:translateY(1px);filter:brightness(.94);
+  box-shadow:0 1px 3px rgba(0,0,0,.42), 0 2px 6px rgba(0,0,0,.30) inset;
+}
+.btn-glass:disabled{opacity:.55;cursor:default;transform:none;filter:none;}
+.btn-glass:disabled::after{display:none;}
+
+.setup-code{
+  font-family:'Courier New',monospace;font-size:13px;font-weight:700;
+  letter-spacing:1.5px;background:#101318;color:#7dd3fc;
+  padding:4px 10px;border-radius:6px;cursor:pointer;display:inline-block;
+}
+.setup-code:hover{background:#1c2430;}
+.setup-code.used{background:#F2F4F7;color:var(--text-3);text-decoration:line-through;cursor:default;}
 </style>
 </head>
 <body>
@@ -77,6 +127,19 @@ code{background:var(--accent-bg);color:var(--accent);padding:2px 6px;border-radi
       <button id="s-add">Add station</button>
     </div>
     <table id="stations-table"></table>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Setup codes
+      <span class="muted" style="font-weight:400;font-size:12px;">one-time codes for new installs</span>
+    </p>
+    <p class="msg" id="setup-msg"></p>
+    <div class="form-row">
+      <input id="sc-prefix" placeholder="Station name (e.g. Iqbal petroleum services)">
+      <input id="sc-count" type="number" min="1" max="200" value="1" style="max-width:110px;" placeholder="How many">
+      <button class="btn-glass" id="sc-generate">Setup code</button>
+    </div>
+    <table id="setup-codes-table"></table>
   </div>
 
   <div class="card">
@@ -398,12 +461,79 @@ async function loadHistory() {
       <td>${r.ip || '—'}</td></tr>`).join('');
 }
 
+// ---------- setup codes ----------
+async function loadSetupCodes() {
+  const rows = await api('/api/admin/setup-codes');
+  const table = document.getElementById('setup-codes-table');
+
+  if (!rows.length) {
+    table.innerHTML = `<tr><td class="muted">No setup codes yet.</td></tr>`;
+    return;
+  }
+
+  table.innerHTML =
+    `<tr class="head"><td>Code</td><td>Station</td><td>Created</td><td>Expires</td><td>Status</td></tr>` +
+    rows.map((r) => {
+      const used = !!r.usedAt;
+      const expired = !used && new Date(r.expiresAt) < new Date();
+      const status = used
+        ? `<span class="pill off">used ${fmtTime(r.usedAt)}</span>`
+        : expired
+          ? `<span class="pill off">expired</span>`
+          : `<span class="pill on">ready</span>`;
+      return `<tr>
+        <td><code class="setup-code ${used || expired ? 'used' : ''}"
+                  ${used || expired ? '' : `data-copy-code="${r.code}" title="Click to copy"`}>${r.code}</code></td>
+        <td>${r.stationName}<br><code class="station-id" data-copy-id="${r.stationId}" title="Click to copy">${r.stationId}</code></td>
+        <td>${fmtTime(r.createdAt)}</td>
+        <td>${fmtTime(r.expiresAt)}</td>
+        <td>${status}</td>
+      </tr>`;
+    }).join('');
+
+  document.querySelectorAll('[data-copy-code]').forEach((el) => {
+    el.onclick = () => {
+      navigator.clipboard.writeText(el.dataset.copyCode);
+      flash('setup-msg', `Copied ${el.dataset.copyCode} — type this into the app's setup screen on the new PC.`, true);
+    };
+  });
+}
+
+document.getElementById('sc-generate').onclick = async () => {
+  const btn = document.getElementById('sc-generate');
+  const namePrefix = document.getElementById('sc-prefix').value.trim();
+  const count = parseInt(document.getElementById('sc-count').value, 10) || 1;
+
+  if (!namePrefix) { flash('setup-msg', 'Enter a station name first.', false); return; }
+
+  btn.disabled = true;
+  try {
+    const res = await api('/api/admin/setup-codes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ namePrefix, count })
+    });
+    if (res.ok) {
+      const codes = res.codes.map((c) => c.code).join(', ');
+      flash('setup-msg', `Generated ${res.codes.length} code(s): ${codes}`, true);
+      document.getElementById('sc-prefix').value = '';
+      document.getElementById('sc-count').value = 1;
+      loadSetupCodes();
+      loadStations(); // the new station rows appear straight away
+    } else {
+      flash('setup-msg', res.error || 'Failed to generate setup codes.', false);
+    }
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 document.getElementById('logout').onclick = async () => {
   await fetch('/api/logout', { method: 'POST' });
   location.href = '/';
 };
 
 loadStations();
+loadSetupCodes();
 loadUsers();
 loadHistory();
 loadLive();
